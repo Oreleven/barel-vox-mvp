@@ -17,19 +17,22 @@ st.markdown("""
 <style>
     /* Header Barel Vox */
     .main-header {
-        font-size: 3rem;
+        font-size: 3.5rem;
         color: #E85D04; /* Orange BTP */
         font-weight: 800;
         font-family: 'Helvetica Neue', sans-serif;
         text-transform: uppercase;
         letter-spacing: 2px;
-        margin-top: 10px;
+        margin: 0;
+        padding: 0;
+        line-height: 1.2;
     }
     .sub-header {
-        font-size: 1.1rem;
+        font-size: 1.2rem;
         color: #888;
         font-family: 'Courier New', monospace;
         margin-bottom: 2rem;
+        font-weight: 600;
     }
     
     /* Avatars avec bordures néons */
@@ -64,37 +67,27 @@ st.markdown("""
         color: #c8e6c9;
         box-shadow: 0 0 15px rgba(56, 142, 60, 0.2);
     }
-    
-    /* Signature du Conseil (Petits avatars) */
-    .council-signature img {
-        border-radius: 50%;
-        border: 1px solid #555;
-        margin-right: 10px;
-        transition: transform 0.3s;
-    }
-    .council-signature img:hover {
-        transform: scale(1.2);
-        border-color: #E85D04;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- GESTION ROBUSTE DES IMAGES ---
-def get_asset_path(base_name):
-    # Cherche l'image peu importe l'extension ou la casse
-    for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG"]:
-        path = f"assets/{base_name}{ext}"
-        if os.path.exists(path):
-            return path
-    return "👤" # Fallback emoji si image manquante
+def get_asset_path(filename_part):
+    # Cherche dans le dossier assets avec différentes extensions et casses
+    # Priorité aux noms exacts de ta capture
+    for name in [filename_part, filename_part.lower(), filename_part.capitalize()]:
+        for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG"]:
+            path = f"assets/{name}{ext}"
+            if os.path.exists(path):
+                return path
+    return "👤" # Fallback
 
-# MAPPING DES AVATARS (Pour le chat)
+# MAPPING STRICT DES FICHIERS (Basé sur ta capture d'écran)
 AVATARS = {
     "user": "👤",
     "keres": get_asset_path("keres"),
     "liorah": get_asset_path("liorah"),
     "ethan": get_asset_path("ethan"),
-    "krypt": get_asset_path("krypt"),
+    "krypt": get_asset_path("Krypt"), # Majuscule K dans ta capture
     "phoebe": get_asset_path("phoebe"),
     "avenor": get_asset_path("avenor"),
 }
@@ -116,7 +109,7 @@ if "analysis_complete" not in st.session_state:
 if "full_context" not in st.session_state:
     st.session_state.full_context = ""
 
-# --- SIDEBAR (Photo Barel + Statuts Verts) ---
+# --- SIDEBAR (Photo Barel + Statuts Épurés) ---
 with st.sidebar:
     # 1. PHOTO DU PATRON (Barel)
     barel_path = get_asset_path("barel")
@@ -138,14 +131,14 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # 3. ÉTAT DU COUNCIL (Tableau de bord vert)
+    # 3. ÉTAT DU COUNCIL (Pas d'icônes, juste le texte et le point vert)
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
-    st.markdown("👁️ **Kérès** (Nettoyeur) : 🟢 *OK*")
-    st.markdown("⚖️ **Liorah** (Raison) : 🟢 *Prête*")
-    st.markdown("⚡ **Ethan** (Contradiction) : 🟢 *Prêt*")
-    st.markdown("👾 **Krypt** (Perturbation) : 🟢 *Prêt*")
-    st.markdown("💎 **Phoebe** (Synthèse) : 🟢 *OK*")
-    st.markdown("👑 **Avenor** (Arbitre) : 🟢 *En attente*")
+    st.markdown("**Kérès** (Nettoyeur) : 🟢 Prêt")
+    st.markdown("**Liorah** (Raison) : 🟢 Prête")
+    st.markdown("**Ethan** (Contradiction) : 🟢 Prêt")
+    st.markdown("**Krypt** (Perturbation) : 🟢 Prêt")
+    st.markdown("**Phoebe** (Synthèse) : 🟢 Prête")
+    st.markdown("**Avenor** (Arbitre) : 🟢 En attente")
     
     st.markdown("---")
     if st.button("🔄 Reset Session"):
@@ -155,18 +148,18 @@ with st.sidebar:
         st.rerun()
 
 # --- HEADER UI (Logo + Titre alignés) ---
-col_logo, col_title = st.columns([1, 5])
+c1, c2 = st.columns([1, 5])
 
-with col_logo:
+with c1:
     logo_path = get_asset_path("logo-barelvox")
     if logo_path != "👤":
-        st.image(logo_path, width=130)
+        st.image(logo_path, width=120)
     else:
-        st.write("🏗️")
+        st.write("🏗️") 
 
-with col_title:
+with c2:
     st.markdown('<div class="main-header">BAREL VOX</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Architecture Anti-Sycophancie • Powered by Council OEE</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Architecture Anti-Sycophancie • Council OEE Powered by Or El Even</div>', unsafe_allow_html=True)
 
 # --- FONCTION MOTEUR (APPEL GEMINI) ---
 def call_gemini(role_prompt, user_content, model_name="gemini-1.5-flash"):
