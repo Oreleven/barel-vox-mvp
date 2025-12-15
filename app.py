@@ -63,6 +63,23 @@ st.markdown("""
     .stProgress > div > div > div > div {
         background-color: #E85D04;
     }
+    
+    /* Logs Steps */
+    .step-log {
+        padding: 8px;
+        margin-bottom: 5px;
+        border-left: 3px solid #E85D04;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 0 5px 5px 0;
+    }
+    .step-done { color: #4CAF50; font-weight: bold; }
+    .step-running { color: #FF9800; font-weight: bold; animation: pulse 1.5s infinite; }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,7 +116,6 @@ def render_council():
 # --- SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Intro simple
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
@@ -157,11 +173,11 @@ def call_gemini(role_prompt, user_content, retries=3):
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "quota" in error_msg.lower():
-                time.sleep((attempt + 2) * 5) # Pause incrémentale
+                time.sleep((attempt + 2) * 10) # Pause longue : 20s, 30s, 40s
                 continue
             else:
                 return f"⚠️ Erreur Agent : {error_msg}"
-    return "⚠️ Erreur : Trafic saturé. Réessayez."
+    return "⚠️ Erreur : Trafic saturé. Réessayez plus tard ou avec un fichier plus petit."
 
 # --- PROMPTS ---
 P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE. Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
@@ -182,7 +198,6 @@ FORMAT STRICT :
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
 
 # --- ZONE CHAT & AFFICHAGE CONSEIL ---
-# Les avatars sont toujours visibles
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -211,44 +226,52 @@ if not st.session_state.analysis_complete:
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        # BARRE DE PROGRESSION + STATUTS
-        progress_bar = st.progress(0, text="Initialisation du protocole OEE...")
-        status_box = st.empty() # Placeholder pour le texte de statut
+        # CONTENEURS POUR L'AFFICHAGE PROGRESSIF
+        progress_bar = st.progress(0, text="Initialisation...")
+        log_container = st.container() # Pour empiler les logs
         
+        # Fonction pour ajouter une ligne de log
+        def add_log(text, status="running"):
+            css = "step-running" if status == "running" else "step-done"
+            icon = "⏳" if status == "running" else "✅"
+            log_container.markdown(f'<div class="step-log {css}">{icon} {text}</div>', unsafe_allow_html=True)
+
         try:
             # ETAPE 1
-            progress_bar.progress(10, text="Lecture du fichier PDF...")
+            progress_bar.progress(10, text="Lecture du fichier...")
             reader = PdfReader(uploaded_file)
-            max_pages = min(50, len(reader.pages)) # Limite technique invisible pour le client
+            max_pages = min(50, len(reader.pages))
             raw_text = ""
-            for i in range(max_pages):
-                raw_text += reader.pages[i].extract_text() + "\n"
+            for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
             
             # ETAPE 2
-            progress_bar.progress(30, text="👁️ Kérès : Analyse des pages clés...")
-            status_box.markdown("**Analyse Kérès en cours...**")
-            clean_text = call_gemini(P_KERES, raw_text[:25000])
+            progress_bar.progress(30, text="Action Kérès...")
+            add_log("Kérès : Analyse des pages clés...", "running")
+            clean_text = call_gemini(P_KERES, raw_text[:20000]) # Réduit un peu pour la sécurité
+            add_log("Kérès : Analyse terminée.", "done")
             
             # ETAPE 3
-            progress_bar.progress(60, text="⚡ Trinité : Scan Juridique, Risques & Data...")
-            status_box.markdown("**Analyse Trinité (Experts) en cours...**")
+            progress_bar.progress(60, text="Action Trinité...")
+            add_log("Trinité (Liorah/Ethan/Krypt) : Scan en cours...", "running")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
+            add_log("Trinité : Rapports Experts générés.", "done")
             
             # ETAPE 4
-            progress_bar.progress(80, text="💎 Phoebe : Compilation Stratégique...")
-            status_box.markdown("**Synthèse Phoebe en cours...**")
+            progress_bar.progress(80, text="Action Phoebe...")
+            add_log("Phoebe : Compilation Stratégique...", "running")
             rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
+            add_log("Phoebe : Synthèse validée.", "done")
             
             # ETAPE 5
-            progress_bar.progress(95, text="👑 Avenor : Rédaction du Verdict...")
-            status_box.markdown("**Délibération Avenor en cours...**")
+            progress_bar.progress(95, text="Action Avenor...")
+            add_log("Avenor : Délibération finale...", "running")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
+            add_log("Avenor : Verdict rendu.", "done")
             
             # FIN
             progress_bar.progress(100, text="✅ Audit Terminé")
             time.sleep(1)
             progress_bar.empty()
-            status_box.empty()
             
             st.session_state.full_context = f"CTX (Extrait):\n{clean_text}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
