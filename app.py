@@ -4,6 +4,7 @@ from pypdf import PdfReader
 import os
 import base64
 import time
+import re # Pour le nettoyage regex
 
 # --- CONFIGURATION MOTEUR ---
 MODEL_NAME = "gemini-2.0-flash" 
@@ -52,7 +53,7 @@ st.markdown("""
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
     
-    /* Council Row (Toujours visible) */
+    /* Council Row */
     .council-container { margin-bottom: 20px; text-align:center; }
     .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
@@ -72,9 +73,6 @@ st.markdown("""
         margin-bottom: 5px;
         border-radius: 0 5px 5px 0;
     }
-    
-    /* Logs Waiting */
-    .waiting-log { color: #FF9800; font-style: italic; padding: 5px; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,7 +97,7 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- RENDER COUNCIL (HTML) ---
+# --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
@@ -168,8 +166,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR ---
-def call_gemini(role_prompt, user_content, retries=5):
+# --- FONCTION MOTEUR (Robustesse) ---
+def call_gemini(role_prompt, user_content, agent_name, retries=5):
     model = genai.GenerativeModel(MODEL_NAME)
     full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
     for attempt in range(retries):
@@ -177,39 +175,44 @@ def call_gemini(role_prompt, user_content, retries=5):
             response = model.generate_content(full_prompt)
             return response.text
         except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "quota" in error_msg.lower():
-                wait = (attempt + 1) * 10
-                time.sleep(wait) 
+            if "429" in str(e) or "quota" in str(e).lower():
+                time.sleep((attempt + 1) * 15)
                 continue
             else:
-                return f"⚠️ Erreur Agent : {error_msg}"
-    return "⚠️ Erreur : Trafic saturé."
+                return f"⚠️ Erreur Agent {agent_name} : {str(e)}"
+    return f"⚠️ Trafic saturé pour {agent_name}."
 
-# --- LOGIQUE PHOEBE (PYTHON PUR) ---
-# Phoebe ne consomme plus de crédit IA, elle formate juste le texte
-def phoebe_processing(trinity_report):
+# --- FONCTION NETTOYAGE PYTHON (EVENA) ---
+# Compresse le texte pour économiser des tokens sans IA
+def python_clean_text(text):
+    text = re.sub(r'\n+', '\n', text) # Supprime sauts de ligne multiples
+    text = re.sub(r'\s+', ' ', text)  # Supprime espaces multiples
+    return text
+
+# --- LOGIQUE PHOEBE (PYTHON) ---
+def phoebe_processing(keres_info, trinity_report):
     return f"""
     ## 💎 RAPPORT DE SYNTHÈSE (PHOEBE)
+    **Données du projet :**
+    {keres_info}
     
-    **Transmission au Décideur (Avenor).**
-    Le Conseil Technique (Trinité) a identifié les points de friction suivants :
-    
+    **Analyse Technique (Trinité) :**
     {trinity_report}
-    
-    ---
-    *Synthèse générée par le protocole interne OEE - Pas d'appel externe.*
     """
 
-# --- PROMPTS ---
-P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE (Extrait 25 pages). Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
+# --- PROMPTS OPTIMISÉS (TOKEN SAVING) ---
+# Kérès ne réécrit plus, il extrait juste (petit output)
+P_KERES = "Tu es KÉRÈS. Extrais uniquement la 'Fiche d'identité' du projet de ce texte : Maître d'ouvrage, Lieu, Dates clés, Montant si dispo, Type de travaux. Format court liste à puces. N'invente rien."
+
+# Trinité bosse directement sur le texte brut nettoyé
 P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité). Analyse ce segment critique du DCE.
 ROLE 1 : LIORAH (Juridique) -> Cherche Pénalités, Assurances, Clauses abusives.
 ROLE 2 : ETHAN (Risques) -> Cherche Planning, Co-activité, Sécurité.
 ROLE 3 : KRYPT (Data) -> Cherche Incohérences chiffres/unités.
 FORMAT SORTIE: 3 paragraphes distincts (LIORAH, ETHAN, KRYPT)."""
+
 P_AVENOR = """Tu es AVENOR. Arbitre.
-Voici le rapport technique du DCE. Tranche pour le client.
+Voici la synthèse du dossier.
 ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
 FORMAT STRICT :
 [FLAG : X]
@@ -217,6 +220,7 @@ FORMAT STRICT :
 **Verdict :** (2 phrases max, direct)
 **Points de Vigilance :** (Top 3)
 **Conseil Stratégique :** (1 action)"""
+
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
 
 # --- CHAT & AVATARS ---
@@ -252,37 +256,43 @@ if not st.session_state.analysis_complete:
         progress_bar = st.progress(0, text="Initialisation...")
         
         try:
-            # ETAPE 1 : EVENA (PYTHON)
-            progress_bar.progress(10, text="Evena : Lecture du fichier...")
+            # ETAPE 1 : EVENA (Lecture + Compression Python)
+            progress_bar.progress(10, text="Evena : Lecture & Compression...")
             reader = PdfReader(uploaded_file)
-            max_pages = min(25, len(reader.pages))
+            # ON MONTE A 80 PAGES GRACE A LA COMPRESSION
+            max_pages = min(80, len(reader.pages)) 
             raw_text = ""
             for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF Terminée ({max_pages} pages)</div>', unsafe_allow_html=True)
             
-            # ETAPE 2 : KERES (AI)
+            # Nettoyage Python (Gratuit)
+            optimized_text = python_clean_text(raw_text)
+            
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF Optimisée ({max_pages} pages)</div>', unsafe_allow_html=True)
+            
+            # ETAPE 2 : KERES (Extraction Métadonnées uniquement -> Petit Coût)
             time.sleep(2)
             progress_bar.progress(30, text="Action Kérès en cours...")
-            clean_text = call_gemini(P_KERES, raw_text[:20000])
-            log_container.markdown('<div class="success-log">✅ Kérès : Anonymisation effectuée</div>', unsafe_allow_html=True)
+            # On envoie seulement le début pour l'identité du projet
+            keres_info = call_gemini(P_KERES, optimized_text[:10000], "Kérès")
+            log_container.markdown('<div class="success-log">✅ Kérès : Fiche Identité extraite</div>', unsafe_allow_html=True)
             
-            # ETAPE 3 : TRINITE (AI)
+            # ETAPE 3 : TRINITE (Analyse sur Texte Optimisé -> Coût Moyen)
             time.sleep(5)
             progress_bar.progress(60, text="Action Trinité (Experts) en cours...")
-            rep_trinity = call_gemini(P_TRINITY, clean_text)
+            # Trinité analyse le texte compressé direct (pas besoin que Kérès le réécrive)
+            rep_trinity = call_gemini(P_TRINITY, optimized_text[:30000], "Trinité") 
             log_container.markdown('<div class="success-log">✅ Trinité : Rapports Experts générés</div>', unsafe_allow_html=True)
             
-            # ETAPE 4 : PHOEBE (PYTHON PUR - PAS D'AI)
+            # ETAPE 4 : PHOEBE (Python pur)
             time.sleep(1)
             progress_bar.progress(80, text="Action Phoebe en cours...")
-            # Phoebe ne fait que du formatage ici, pas d'appel Gemini
-            rep_phoebe = phoebe_processing(rep_trinity) 
-            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse validée (Transmission Interne)</div>', unsafe_allow_html=True)
+            rep_phoebe = phoebe_processing(keres_info, rep_trinity)
+            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse structurée</div>', unsafe_allow_html=True)
             
-            # ETAPE 5 : AVENOR (AI)
-            time.sleep(5) # Petite pause avant verdict
+            # ETAPE 5 : AVENOR (Verdict -> Petit Coût)
+            time.sleep(5)
             progress_bar.progress(95, text="Action Avenor en cours...")
-            rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
+            rep_avenor = call_gemini(P_AVENOR, rep_phoebe, "Avenor")
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             
             # FIN
@@ -290,7 +300,7 @@ if not st.session_state.analysis_complete:
             time.sleep(1)
             progress_bar.empty()
             
-            st.session_state.full_context = f"CTX (Extrait):\n{clean_text}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
+            st.session_state.full_context = f"PROJET:\n{keres_info}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
             
             st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
