@@ -1,7 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
 from pypdf import PdfReader
-import os
 import base64
 import time
 import json
@@ -33,42 +32,30 @@ st.set_page_config(
 # --- STYLES CSS ---
 st.markdown("""
 <style>
-    /* UI Hacks Upload & Header */
     [data-testid='stFileUploader'] section > div > div > span { display: none; }
     [data-testid='stFileUploader'] section > div > div::after {
         content: "Glissez le dossier DCE (PDF) ici ou cliquez pour parcourir";
         color: #E85D04; font-weight: bold; display: block; margin-top: 10px; font-family: 'Helvetica Neue', sans-serif;
     }
     [data-testid='stFileUploader'] section > div > div > small { display: none; }
-
     .header-container { display: flex; flex-direction: row; align-items: center; margin-bottom: 2rem; gap: 20px; }
     .header-logo { width: 100px; height: auto; }
     .header-text-block { display: flex; flex-direction: column; justify-content: center; }
     .main-header { font-size: 3.5rem; color: #E85D04; font-weight: 800; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 2px; line-height: 1; margin: 0; }
     .sub-header { font-size: 1.1rem; color: #888; font-family: 'Courier New', monospace; font-weight: 600; margin-top: 5px; white-space: nowrap; }
-    
     .stChatMessage .stChatMessageAvatar { border: 2px solid #E85D04; border-radius: 50%; box-shadow: 0 0 10px rgba(232, 93, 4, 0.3); }
-    
-    /* Verdict Boxes */
     .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
-    
-    /* Council Row */
     .council-container { margin-bottom: 20px; text-align:center; }
     .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; object-fit: cover; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
-    
-    /* Progress Bar */
     .stProgress > div > div > div > div { background-color: #E85D04; }
-    
-    /* Logs */
-    .success-log {
-        color: #4CAF50; font-weight: bold; padding: 10px; border-left: 3px solid #4CAF50;
-        background-color: rgba(76, 175, 80, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0;
-    }
+    .success-log { color: #4CAF50; font-weight: bold; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; }
+    .waiting-log { color: #FF9800; font-weight: bold; padding: 10px; border-left: 3px solid #FF9800; background-color: rgba(255, 152, 0, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; animation: pulse 2s infinite;}
+    @keyframes pulse { 0% {opacity: 1;} 50% {opacity: 0.6;} 100% {opacity: 1;} }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,10 +86,8 @@ def render_council():
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
         path = AVATARS[member]
         img_b64 = get_img_as_base64(path)
-        if img_b64:
-            src = f"data:image/png;base64,{img_b64}"
-        else:
-            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
+        if img_b64: src = f"data:image/png;base64,{img_b64}"
+        else: src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
@@ -111,9 +96,7 @@ def render_council():
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
-        "role": "assistant",
-        "name": "Avenor",
-        "avatar": AVATARS["avenor"],
+        "role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"],
         "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
     })
 
@@ -132,18 +115,16 @@ with st.sidebar:
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
-    st.markdown("**Evena** (Orchestratrice) : 🟢 Prête")
-    st.markdown("**Kérès** (Nettoyeur) : 🟢 Prêt")
-    st.markdown("**Trinité** (Experts) : 🟢 Prêts")
-    st.markdown("**Phoebe** (Synthèse) : 🟢 Prête")
-    st.markdown("**Avenor** (Arbitre) : 🟢 En attente")
+    st.markdown("**Evena** : 🟢 Prête")
+    st.markdown("**Kérès** : 🟢 Prêt")
+    st.markdown("**Trinité** : 🟢 Prêts")
+    st.markdown("**Phoebe** : 🟢 Prête")
+    st.markdown("**Avenor** : 🟢 En attente")
     st.markdown("---")
     if st.button("🔄 Reset Session"):
         st.session_state.messages = []
         st.session_state.messages.append({
-            "role": "assistant",
-            "name": "Avenor",
-            "avatar": AVATARS["avenor"],
+            "role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"],
             "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
         })
         st.session_state.analysis_complete = False
@@ -162,60 +143,50 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 1. EVENA : EXTRACTION JSON (Python Pur) ---
+# --- FONCTION MOTEUR "IMMORTELLE" ---
+def call_gemini_resilient(role_prompt, user_content, agent_name, output_json=False, status_placeholder=None):
+    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
+    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
+    
+    attempts = 0
+    while True: # Boucle infinie tant que ça ne passe pas
+        try:
+            attempts += 1
+            response = model.generate_content(full_prompt)
+            if output_json: return json.loads(response.text)
+            else: return response.text
+            
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "quota" in error_str.lower():
+                # On affiche un message d'attente à l'utilisateur
+                if status_placeholder:
+                    status_placeholder.markdown(f'<div class="waiting-log">⏳ Trafic saturé pour {agent_name}. Pause technique de 20s (Tentative {attempts})...</div>', unsafe_allow_html=True)
+                time.sleep(20) # On attend sagement
+                continue # On recommence la boucle
+            else:
+                return f"⚠️ Erreur critique Agent {agent_name} : {error_str}"
+
+# --- FONCTIONS LOCALES ---
 def evena_extract_json(reader):
-    # Transforme le PDF en structure JSON (Page par Page)
-    # Plus léger à manipuler pour le Python qu'un String géant
     doc_structure = {}
-    total_text_length = 0
-    
-    # On limite intelligemment à 80 pages pour le MVP
     max_pages = min(80, len(reader.pages))
-    
     for i in range(max_pages):
         page_content = reader.pages[i].extract_text()
-        # Nettoyage primaire immédiat
-        page_content = re.sub(r'\n+', ' ', page_content) # Supprime sauts de ligne
-        page_content = re.sub(r'\s+', ' ', page_content) # Supprime double espaces
+        page_content = re.sub(r'\n+', ' ', page_content) 
         doc_structure[f"page_{i+1}"] = page_content
-        total_text_length += len(page_content)
-        
-    return doc_structure, total_text_length
+    return doc_structure
 
-# --- 2. KERES : ANONYMISATION (Simulation Python) ---
 def keres_anonymize_json(json_data):
-    # Regex simple pour simuler le travail sans appel API
-    # On remplace les patterns d'emails et téléphones
     str_data = json.dumps(json_data, ensure_ascii=False)
-    
-    # Anonymisation basique
     str_data = re.sub(r'[\w\.-]+@[\w\.-]+', '[EMAIL_HIDDEN]', str_data)
     str_data = re.sub(r'\b0[1-9]([-. ]?[0-9]{2}){4}\b', '[PHONE_HIDDEN]', str_data)
-    
-    return str_data # Retourne un String JSON ready pour l'API
+    return str_data
 
-# --- API GEMINI (MODE JSON) ---
-def call_gemini_json(role_prompt, user_content):
-    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"})
-    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT JSON SOURCE :\n{user_content}"
-    try:
-        response = model.generate_content(full_prompt)
-        return json.loads(response.text)
-    except Exception as e:
-        return {"error": str(e)}
-
-# --- API GEMINI (MODE TEXTE FINAL) ---
-def call_gemini_text(role_prompt, user_content):
-    model = genai.GenerativeModel(MODEL_NAME)
-    full_prompt = f"{role_prompt}\n\n---\n\nDONNÉES STRUCTURÉES :\n{user_content}"
-    try:
-        response = model.generate_content(full_prompt)
-        return response.text
-    except Exception as e:
-        return f"Erreur : {str(e)}"
+def phoebe_processing(trinity_report):
+    return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
 
 # --- PROMPTS ---
-# Trinité travaille sur le JSON et renvoie du JSON (Super efficace)
 P_TRINITE = """
 Tu es le moteur d'analyse du CONSEIL OEE.
 Analyse ce contenu JSON (DCE BTP).
@@ -223,34 +194,22 @@ Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
 - "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
-
-RÔLES :
-1. LIORAH (Juridique) : Pénalités, Assurances, Normes manquantes.
-2. ETHAN (Risques) : Planning, Co-activité, Sécurité.
-3. KRYPT (Data) : Incohérences chiffres/unités.
 """
 
-# Avenor ne reçoit QUE le JSON de Trinité (Pas le document source)
 P_AVENOR = """Tu es AVENOR. Arbitre.
 Voici les rapports JSON des experts.
 Synthétise et Tranche pour le client.
-
-ALGO :
-- Si un expert a mis 🔴 -> Verdict 🔴 (DANGER)
-- Si majorité 🟠 -> Verdict 🟠 (VIGILANCE)
-- Sinon -> 🟢 (RAS)
-
-FORMAT DE SORTIE :
-[FLAG : X] (Mets l'émoji ici)
-
+ALGO : Si un expert a mis 🔴 -> Verdict 🔴. Si majorité 🟠 -> Verdict 🟠. Sinon -> 🟢.
+FORMAT SORTIE :
+[FLAG : X]
 ### DÉCISION DU CONSEIL
-**Verdict :** (2 phrases max, direct)
+**Verdict :** (2 phrases max)
 **Points de Vigilance :** (Top 3)
 **Conseil Stratégique :** (1 action)"""
 
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, direct, expert BTP."
 
-# --- CHAT UI ---
+# --- CHAT & AVATARS ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -267,7 +226,7 @@ for msg in st.session_state.messages:
             else:
                 st.write(msg["content"])
 
-# --- EXECUTION FLOW ---
+# --- EXECUTION ---
 if not st.session_state.analysis_complete:
     uploaded_file = st.file_uploader("Upload DCE", type=['pdf'], label_visibility="collapsed")
 
@@ -281,30 +240,28 @@ if not st.session_state.analysis_complete:
             
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
+        status_placeholder = st.empty() # Pour les messages d'attente
         
         try:
-            # 1. EVENA (Python Pur - Extraction JSON)
-            progress_bar.progress(10, text="Evena : Lecture & Structure JSON...")
+            # 1. EVENA
+            progress_bar.progress(10, text="Evena : Lecture du fichier...")
             reader = PdfReader(uploaded_file)
-            json_doc, doc_len = evena_extract_json(reader)
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction JSON terminée (Volume: {doc_len} chars)</div>', unsafe_allow_html=True)
+            json_doc = evena_extract_json(reader)
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # 2. KERES (Python Pur - Anonymisation Regex)
+            # 2. KERES
             time.sleep(1)
-            progress_bar.progress(30, text="Kérès : Anonymisation du JSON...")
+            progress_bar.progress(30, text="Kérès : Nettoyage...")
             clean_json_str = keres_anonymize_json(json_doc)
-            log_container.markdown('<div class="success-log">✅ Kérès : Données anonymisées et nettoyées</div>', unsafe_allow_html=True)
+            log_container.markdown('<div class="success-log">✅ Kérès : Données anonymisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITÉ (API 1 - Envoi du JSON pour analyse)
-            time.sleep(2)
-            progress_bar.progress(60, text="Trinité : Analyse Expert (Appel Unique)...")
+            # 3. TRINITE (API RESILIENTE)
+            progress_bar.progress(60, text="Trinité : Scan Expert...")
+            # On passe le placeholder pour afficher les messages d'attente
+            trinity_result = call_gemini_resilient(P_TRINITE, clean_json_str[:60000], "Trinité", output_json=True, status_placeholder=status_placeholder)
             
-            # On envoie les 60 000 premiers caractères du JSON pour être sûr de passer (env 20-30 pages denses)
-            # C'est la limite safe pour le Free Tier en un seul appel
-            trinity_result = call_gemini_json(P_TRINITE, clean_json_str[:60000])
-            
-            if "error" in trinity_result:
-                raise Exception(trinity_result["error"])
+            # Nettoyage du placeholder d'attente
+            status_placeholder.empty()
             
             log_container.markdown(f'''
             <div class="success-log">
@@ -315,32 +272,31 @@ if not st.session_state.analysis_complete:
             </div>
             ''', unsafe_allow_html=True)
             
-            # 4. PHOEBE (Formatage Python - Pas d'API)
+            # 4. PHOEBE
             time.sleep(1)
             progress_bar.progress(80, text="Phoebe : Compilation...")
-            log_container.markdown('<div class="success-log">✅ Phoebe : Dossier transmis à Avenor</div>', unsafe_allow_html=True)
+            rep_phoebe = phoebe_processing(json.dumps(trinity_result))
+            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
             
-            # 5. AVENOR (API 2 - Verdict sur le JSON de Trinité)
-            time.sleep(2)
-            progress_bar.progress(95, text="Avenor : Verdict final...")
+            # 5. AVENOR (API RESILIENTE)
+            progress_bar.progress(90, text="Avenor : Délibération...")
+            rep_avenor = call_gemini_resilient(P_AVENOR, rep_phoebe, "Avenor", output_json=False, status_placeholder=status_placeholder)
+            status_placeholder.empty()
             
-            # Avenor ne lit que le résultat de Trinité (très léger)
-            verdict = call_gemini_text(P_AVENOR, json.dumps(trinity_result))
-            
+            log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             progress_bar.progress(100, text="Audit Terminé")
             time.sleep(1)
             progress_bar.empty()
             
-            # Sauvegarde pour le Chat
-            st.session_state.full_context = f"ANALYSE EXPERTS:\n{json.dumps(trinity_result)}\nVERDICT:\n{verdict}"
+            st.session_state.full_context = f"ANALYSE:\n{rep_phoebe}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
             
-            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": verdict})
+            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
             st.rerun()
 
         except Exception as e:
             progress_bar.empty()
-            st.error(f"Erreur critique : {str(e)}")
+            st.error(f"Erreur technique : {str(e)}")
 
 if st.session_state.analysis_complete:
     user_input = st.chat_input("Question pour Avenor...")
@@ -350,8 +306,10 @@ if st.session_state.analysis_complete:
             
         with st.spinner("Avenor réfléchit..."):
             full_prompt = f"{P_CHAT_AVENOR}\nCTX:\n{st.session_state.full_context}\nQ: {user_input}"
-            model = genai.GenerativeModel(MODEL_NAME)
-            reply = model.generate_content(full_prompt).text
+            try:
+                model = genai.GenerativeModel(MODEL_NAME)
+                reply = model.generate_content(full_prompt).text
+            except: reply = "Désolé, je suis surchargé. Réessayez."
             
         st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
         with st.chat_message("assistant", avatar=AVATARS["avenor"]): st.write(reply)
