@@ -72,6 +72,9 @@ st.markdown("""
         margin-bottom: 5px;
         border-radius: 0 5px 5px 0;
     }
+    
+    /* Logs Waiting */
+    .waiting-log { color: #FF9800; font-style: italic; padding: 5px; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,30 +102,20 @@ AVATARS = {
 # --- RENDER COUNCIL (HTML) ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
-    # On force la liste exacte, Evena en premier
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
         path = AVATARS[member]
         img_b64 = get_img_as_base64(path)
-        
-        # Fallback si image non trouvée pour ne pas casser l'affichage
         if img_b64:
             src = f"data:image/png;base64,{img_b64}"
         else:
-            # Fallback visuel (emoji générique) si le fichier manque
             src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
-            
-        html += f'''
-        <div class="council-member">
-            <img src="{src}" class="council-img"><br>
-            {member.capitalize()}
-        </div>'''
+        html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
 
 # --- SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Intro Avenor
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
@@ -176,10 +169,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- FONCTION MOTEUR ---
-def call_gemini(role_prompt, user_content, retries=3):
+def call_gemini(role_prompt, user_content, retries=5):
     model = genai.GenerativeModel(MODEL_NAME)
     full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
-    
     for attempt in range(retries):
         try:
             response = model.generate_content(full_prompt)
@@ -187,21 +179,37 @@ def call_gemini(role_prompt, user_content, retries=3):
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "quota" in error_msg.lower():
-                time.sleep((attempt + 2) * 15) # Pause très longue pour éviter le crash
+                wait = (attempt + 1) * 10
+                time.sleep(wait) 
                 continue
             else:
                 return f"⚠️ Erreur Agent : {error_msg}"
-    return "⚠️ Erreur : Trafic saturé. Réessayez plus tard."
+    return "⚠️ Erreur : Trafic saturé."
+
+# --- LOGIQUE PHOEBE (PYTHON PUR) ---
+# Phoebe ne consomme plus de crédit IA, elle formate juste le texte
+def phoebe_processing(trinity_report):
+    return f"""
+    ## 💎 RAPPORT DE SYNTHÈSE (PHOEBE)
+    
+    **Transmission au Décideur (Avenor).**
+    Le Conseil Technique (Trinité) a identifié les points de friction suivants :
+    
+    {trinity_report}
+    
+    ---
+    *Synthèse générée par le protocole interne OEE - Pas d'appel externe.*
+    """
 
 # --- PROMPTS ---
-P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE (Extrait). Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
+P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE (Extrait 25 pages). Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
 P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité). Analyse ce segment critique du DCE.
 ROLE 1 : LIORAH (Juridique) -> Cherche Pénalités, Assurances, Clauses abusives.
 ROLE 2 : ETHAN (Risques) -> Cherche Planning, Co-activité, Sécurité.
 ROLE 3 : KRYPT (Data) -> Cherche Incohérences chiffres/unités.
 FORMAT SORTIE: 3 paragraphes distincts (LIORAH, ETHAN, KRYPT)."""
-P_PHOEBE = "Tu es PHOEBE. Synthèse. Fusionne le rapport ci-dessous. Garde uniquement les points bloquants et critiques."
 P_AVENOR = """Tu es AVENOR. Arbitre.
+Voici le rapport technique du DCE. Tranche pour le client.
 ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
 FORMAT STRICT :
 [FLAG : X]
@@ -240,39 +248,39 @@ if not st.session_state.analysis_complete:
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        # LOGS PERSISTANTS
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
         
         try:
-            # ETAPE 1 : EVENA
-            progress_bar.progress(10, text="Action Evena...")
+            # ETAPE 1 : EVENA (PYTHON)
+            progress_bar.progress(10, text="Evena : Lecture du fichier...")
             reader = PdfReader(uploaded_file)
             max_pages = min(25, len(reader.pages))
             raw_text = ""
             for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF Terminée</div>', unsafe_allow_html=True)
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF Terminée ({max_pages} pages)</div>', unsafe_allow_html=True)
             
-            # ETAPE 2 : KERES
-            time.sleep(5) # Pause de respiration
+            # ETAPE 2 : KERES (AI)
+            time.sleep(2)
             progress_bar.progress(30, text="Action Kérès en cours...")
             clean_text = call_gemini(P_KERES, raw_text[:20000])
             log_container.markdown('<div class="success-log">✅ Kérès : Anonymisation effectuée</div>', unsafe_allow_html=True)
             
-            # ETAPE 3 : TRINITE
-            time.sleep(15) # Pause LONGUE pour le quota
+            # ETAPE 3 : TRINITE (AI)
+            time.sleep(5)
             progress_bar.progress(60, text="Action Trinité (Experts) en cours...")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
             log_container.markdown('<div class="success-log">✅ Trinité : Rapports Experts générés</div>', unsafe_allow_html=True)
             
-            # ETAPE 4 : PHOEBE
-            time.sleep(10) # Pause pour le quota
+            # ETAPE 4 : PHOEBE (PYTHON PUR - PAS D'AI)
+            time.sleep(1)
             progress_bar.progress(80, text="Action Phoebe en cours...")
-            rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
-            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse validée</div>', unsafe_allow_html=True)
+            # Phoebe ne fait que du formatage ici, pas d'appel Gemini
+            rep_phoebe = phoebe_processing(rep_trinity) 
+            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse validée (Transmission Interne)</div>', unsafe_allow_html=True)
             
-            # ETAPE 5 : AVENOR
-            time.sleep(10) # Pause finale avant verdict
+            # ETAPE 5 : AVENOR (AI)
+            time.sleep(5) # Petite pause avant verdict
             progress_bar.progress(95, text="Action Avenor en cours...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
