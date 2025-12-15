@@ -2,105 +2,170 @@ import streamlit as st
 import google.generativeai as genai
 from pypdf import PdfReader
 import os
-import time
+import base64
+
+# --- FONCTION UTILITAIRE (BASE64) ---
+# Nécessaire pour afficher les images locales dans le HTML/CSS (Header & Avatars chat)
+def get_img_as_base64(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except:
+        return ""
 
 # --- CONFIGURATION DE LA PAGE ---
+# On tente de charger le favicon, sinon fallback standard
+favicon_path = "assets/favicon.ico"
+page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
+
 st.set_page_config(
     page_title="BAREL VOX - Council OEE",
-    page_icon="🏗️",
+    page_icon=page_icon,
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- STYLES CSS (Cyber-BTP & Caméléon) ---
+# --- STYLES CSS (Cyber-BTP & UI Hacks) ---
 st.markdown("""
 <style>
-    /* Header Barel Vox */
+    /* HACK : TRADUCTION DU DRAG & DROP STREAMLIT EN FRANCAIS */
+    [data-testid='stFileUploader'] section > div > div > span {
+        display: none;
+    }
+    [data-testid='stFileUploader'] section > div > div::after {
+        content: "Glissez le dossier DCE (PDF) ici ou cliquez pour parcourir";
+        color: #E85D04; /* Orange BTP */
+        font-weight: bold;
+        display: block;
+        margin-top: 10px;
+        font-family: 'Helvetica Neue', sans-serif;
+    }
+    [data-testid='stFileUploader'] section > div > div > small {
+        display: none; /* Masque le 'Limit 200MB...' */
+    }
+
+    /* Header Barel Vox Custom Flexbox */
+    .header-container {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        margin-bottom: 2rem;
+        gap: 20px;
+    }
+    .header-logo {
+        width: 100px;
+        height: auto;
+    }
+    .header-text-block {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
     .main-header {
         font-size: 3.5rem;
-        color: #E85D04; /* Orange BTP */
+        color: #E85D04; 
         font-weight: 800;
         font-family: 'Helvetica Neue', sans-serif;
         text-transform: uppercase;
         letter-spacing: 2px;
+        line-height: 1;
         margin: 0;
-        padding: 0;
-        line-height: 1.2;
     }
     .sub-header {
-        font-size: 1.2rem;
+        font-size: 1.1rem;
         color: #888;
         font-family: 'Courier New', monospace;
-        margin-bottom: 2rem;
         font-weight: 600;
+        margin-top: 5px;
+        white-space: nowrap; /* Force une seule ligne */
     }
     
-    /* Avatars avec bordures néons */
+    /* Avatars Chat */
     .stChatMessage .stChatMessageAvatar {
         border: 2px solid #E85D04;
         border-radius: 50%;
         box-shadow: 0 0 10px rgba(232, 93, 4, 0.3);
     }
     
-    /* EFFET CAMÉLÉON (Boites de décision) */
-    .decision-box-red {
-        border: 2px solid #D32F2F;
-        background-color: rgba(211, 47, 47, 0.1);
-        padding: 20px;
-        border-radius: 8px;
-        color: #ffcdd2;
-        box-shadow: 0 0 15px rgba(211, 47, 47, 0.2);
+    /* BOITES DE DECISION (Verdict) */
+    .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
+    .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
+    .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
+    
+    /* Style pour la ligne d'avatars dans le chat */
+    .council-row {
+        display: flex;
+        gap: 15px;
+        margin-top: 15px;
+        padding-top: 10px;
+        border-top: 1px solid #333;
     }
-    .decision-box-orange {
-        border: 2px solid #F57C00;
-        background-color: rgba(245, 124, 0, 0.1);
-        padding: 20px;
-        border-radius: 8px;
-        color: #ffe0b2;
-        box-shadow: 0 0 15px rgba(245, 124, 0, 0.2);
+    .council-member {
+        text-align: center;
+        font-size: 0.8rem;
+        color: #888;
     }
-    .decision-box-green {
-        border: 2px solid #388E3C;
-        background-color: rgba(56, 142, 60, 0.1);
-        padding: 20px;
-        border-radius: 8px;
-        color: #c8e6c9;
-        box-shadow: 0 0 15px rgba(56, 142, 60, 0.2);
+    .council-img {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        border: 2px solid #444;
+        margin-bottom: 5px;
+        transition: transform 0.2s;
+    }
+    .council-img:hover {
+        transform: scale(1.1);
+        border-color: #E85D04;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- GESTION ROBUSTE DES IMAGES ---
+# --- GESTION DES ASSETS ---
 def get_asset_path(filename_part):
-    # Cherche dans le dossier assets avec différentes extensions et casses
-    # Priorité aux noms exacts de ta capture
     for name in [filename_part, filename_part.lower(), filename_part.capitalize()]:
-        for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG"]:
+        for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".ico"]:
             path = f"assets/{name}{ext}"
             if os.path.exists(path):
                 return path
-    return "👤" # Fallback
+    return "👤"
 
-# MAPPING STRICT DES FICHIERS (Basé sur ta capture d'écran)
+# MAPPING STRICT
 AVATARS = {
     "user": "👤",
     "keres": get_asset_path("keres"),
     "liorah": get_asset_path("liorah"),
     "ethan": get_asset_path("ethan"),
-    "krypt": get_asset_path("Krypt"), # Majuscule K dans ta capture
+    "krypt": get_asset_path("Krypt"),
     "phoebe": get_asset_path("phoebe"),
     "avenor": get_asset_path("avenor"),
+    "logo": get_asset_path("logo-barelvox"),
+    "barel": get_asset_path("barel")
 }
 
 # --- INITIALISATION SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Intro Avenor
+    
+    # Construction de la barre visuelle des avatars pour l'intro
+    # On encode les images en base64 pour les injecter dans le HTML du message
+    council_html = '<div class="council-row">'
+    for member in ["keres", "liorah", "ethan", "krypt", "phoebe"]:
+        img_b64 = get_img_as_base64(AVATARS[member])
+        if img_b64:
+            council_html += f'''
+            <div class="council-member">
+                <img src="data:image/png;base64,{img_b64}" class="council-img"><br>
+                {member.capitalize()}
+            </div>'''
+    council_html += '</div>'
+
+    # Message Intro Avenor avec les avatars intégrés
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
         "avatar": AVATARS["avenor"],
-        "content": "Le Council OEE est en session. Kérès, Liorah, Ethan, Krypt et Phoebe sont connectés. Déposez le DCE pour initier le protocole."
+        "content": f"Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole.{council_html}"
     })
 
 if "analysis_complete" not in st.session_state:
@@ -109,18 +174,14 @@ if "analysis_complete" not in st.session_state:
 if "full_context" not in st.session_state:
     st.session_state.full_context = ""
 
-# --- SIDEBAR (Photo Barel + Statuts Épurés) ---
+# --- SIDEBAR ---
 with st.sidebar:
-    # 1. PHOTO DU PATRON (Barel)
-    barel_path = get_asset_path("barel")
-    if barel_path != "👤":
-        st.image(barel_path, use_column_width=True)
+    if AVATARS["barel"] != "👤":
+        st.image(AVATARS["barel"], use_column_width=True)
     else:
         st.markdown("## 🏗️ BAREL VOX")
     
     st.markdown("---")
-    
-    # 2. INPUT CLÉ API
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password", help="Colle ta clé AI Studio ici.")
     
     if api_key:
@@ -130,8 +191,6 @@ with st.sidebar:
         st.warning("Moteur en attente...")
         
     st.markdown("---")
-    
-    # 3. ÉTAT DU COUNCIL (Pas d'icônes, juste le texte et le point vert)
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
     st.markdown("**Kérès** (Nettoyeur) : 🟢 Prêt")
     st.markdown("**Liorah** (Raison) : 🟢 Prête")
@@ -147,21 +206,20 @@ with st.sidebar:
         st.session_state.full_context = ""
         st.rerun()
 
-# --- HEADER UI (Logo + Titre alignés) ---
-c1, c2 = st.columns([1, 5])
+# --- HEADER UI (Flexbox pour alignement parfait) ---
+logo_b64 = get_img_as_base64(AVATARS["logo"])
+header_html = f"""
+<div class="header-container">
+    <img src="data:image/png;base64,{logo_b64}" class="header-logo">
+    <div class="header-text-block">
+        <div class="main-header">BAREL VOX</div>
+        <div class="sub-header">Architecture Anti-Sycophancie • Council OEE Powered by Or El Even</div>
+    </div>
+</div>
+"""
+st.markdown(header_html, unsafe_allow_html=True)
 
-with c1:
-    logo_path = get_asset_path("logo-barelvox")
-    if logo_path != "👤":
-        st.image(logo_path, width=120)
-    else:
-        st.write("🏗️") 
-
-with c2:
-    st.markdown('<div class="main-header">BAREL VOX</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Architecture Anti-Sycophancie • Council OEE Powered by Or El Even</div>', unsafe_allow_html=True)
-
-# --- FONCTION MOTEUR (APPEL GEMINI) ---
+# --- FONCTION MOTEUR ---
 def call_gemini(role_prompt, user_content, model_name="gemini-1.5-flash"):
     try:
         model = genai.GenerativeModel(model_name)
@@ -172,166 +230,103 @@ def call_gemini(role_prompt, user_content, model_name="gemini-1.5-flash"):
         return f"⚠️ Erreur Agent : {str(e)}"
 
 # --- PROMPTS DU COUNCIL ---
-P_KERES = """Tu es KÉRÈS. TA MISSION : Anonymiser et structurer.
-Prends ce texte OCR brut (DCE BTP).
-1. Enlève les noms de personnes, emails, téléphones -> remplace par [CONFIDENTIEL].
-2. GARDE ABSOLUMENT : Prix, Dates, Pénalités, Quantités, Normes (DTU).
-3. Ne résume pas. Rends un texte propre."""
-
-P_LIORAH = """Tu es LIORAH (Juridique & Conformité).
-Analyse ce texte BTP nettoyé.
-Cherche : Pénalités de retard non plafonnées, Manque d'assurances, Clauses abusives, Références normes manquantes.
-Format : Markdown, Liste à puces. Sois factuelle."""
-
-P_ETHAN = """Tu es ETHAN (Risques & Contradiction).
-Crash-test ce projet BTP. Sois brutal.
-Cherche : Planning irréaliste (Hiver/Intempéries), Co-activité dangereuse, Risques sécurité oubliés, Budget sous-estimé.
-Format : Markdown. Ton sévère."""
-
-P_KRYPT = """Tu es KRYPT (Data & Anomalies).
-Cherche les bugs dans la matrice.
-Cherche : Incohérences d'unités (m2/m3), Matériaux obsolètes, Contradictions techniques, Chiffres aberrants.
-Format : Markdown. Focus Data."""
-
-P_PHOEBE = """Tu es PHOEBE (Compilation Secrète).
-Voici 3 rapports d'experts (Liorah, Ethan, Krypt).
-TA MISSION : Fusionner ces informations pour le Décideur (Avenor).
-1. Supprime les doublons.
-2. Garde uniquement les points critiques et bloquants.
-3. Structure en : [Juridique] / [Risques] / [Data].
-Ne donne pas de décision, juste les faits purs."""
-
-P_AVENOR = """Tu es AVENOR (Arbitre Final).
-Voici la synthèse technique de Phoebe.
-TA MISSION : Trancher pour le client.
-
-ALGORITHME DE DÉCISION :
-- Si danger mortel, illégal ou faillite assurée -> 🔴 (Rouge)
-- Si doutes sérieux, flou ou risque financier -> 🟠 (Orange)
-- Si RAS -> 🟢 (Vert)
-
-FORMAT DE SORTIE (Strict) :
-[FLAG : X] (Mets l'émoji ici)
-
+P_KERES = "Tu es KÉRÈS. TA MISSION : Anonymiser. Garde Prix, Dates, Pénalités, Normes. Enlève noms/emails. Texte propre."
+P_LIORAH = "Tu es LIORAH. Cherche : Pénalités non plafonnées, Manque assurances, Clauses abusives. Format Markdown Liste."
+P_ETHAN = "Tu es ETHAN. Crash-test. Cherche : Planning irréaliste, Co-activité, Sécurité oubliée. Ton sévère."
+P_KRYPT = "Tu es KRYPT. Data. Cherche : Incohérences unités, Matériaux obsolètes, Chiffres aberrants."
+P_PHOEBE = "Tu es PHOEBE. Fusionne les 3 rapports (Liorah, Ethan, Krypt). Garde le critique. Structure : [Juridique]/[Risques]/[Data]."
+P_AVENOR = """Tu es AVENOR. Tranche pour le client.
+ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
+FORMAT STRICT :
+[FLAG : X]
 ### DÉCISION DU CONSEIL
-
-**Verdict :** (2 phrases max, ton direct)
-
-**Points de Vigilance Prioritaires :**
-- (Liste les 3 points les plus graves)
-
-**Conseil Stratégique :** (Une action immédiate)
-"""
-
-P_CHAT_AVENOR = """Tu es AVENOR, le chef du Conseil OEE.
-Tu discutes maintenant avec le client (Stéphane).
-Tu as en mémoire tout le dossier technique analysé précédemment.
-Réponds à ses questions sur les risques, le juridique ou la data en te basant sur l'analyse faite.
-Sois pro, direct, un peu autoritaire mais bienveillant (style Architecte Senior)."""
+**Verdict :** (2 phrases max, direct)
+**Points de Vigilance :** (Top 3)
+**Conseil Stratégique :** (1 action)"""
+P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client (Stéphane) sur le dossier analysé. Sois pro, direct, architecte senior."
 
 # --- AFFICHAGE HISTORIQUE CHAT ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
-        # Affichage spécial pour le verdict
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
             css_class = "decision-box-green"
             if "🔴" in msg["content"]: css_class = "decision-box-red"
             elif "🟠" in msg["content"]: css_class = "decision-box-orange"
-            
             st.markdown(f'<div class="{css_class}">{msg["content"]}</div>', unsafe_allow_html=True)
             
-            # SIGNATURE DU CONSEIL (Les têtes sous le verdict)
+            # Rappel visuel du conseil sous verdict
             st.markdown("<br><small>Conseil réuni :</small>", unsafe_allow_html=True)
             cols_sig = st.columns([1,1,1,1,10])
             with cols_sig[0]: st.image(AVATARS["keres"], width=40)
             with cols_sig[1]: st.image(AVATARS["liorah"], width=40)
             with cols_sig[2]: st.image(AVATARS["ethan"], width=40)
             with cols_sig[3]: st.image(AVATARS["krypt"], width=40)
-            
         else:
-            st.markdown(f"**{msg['name']}**")
-            st.write(msg["content"])
+            if msg["role"] == "assistant":
+                st.markdown(f"**{msg['name']}**")
+                # Support HTML pour l'intro avec avatars
+                st.markdown(msg["content"], unsafe_allow_html=True)
+            else:
+                st.write(msg["content"])
 
-# --- ZONE D'UPLOAD (Se cache si analyse faite) ---
+# --- ZONE D'UPLOAD ---
 if not st.session_state.analysis_complete:
-    uploaded_file = st.file_uploader("📂 Déposez le dossier (PDF) pour analyse...", type=['pdf'])
+    # Le label est masqué/modifié par CSS, mais on garde un label technique propre
+    uploaded_file = st.file_uploader("Upload DCE", type=['pdf'], label_visibility="collapsed")
 
     if uploaded_file:
         if not api_key:
             st.error("⛔ Clé API manquante. Regarde la barre latérale.")
             st.stop()
             
-        # 1. Message User
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]):
             st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        # 2. Pipeline
         status_box = st.status("🚀 Initialisation du Protocole OEE...", expanded=True)
-        
         try:
-            # A. Extraction
             status_box.write("📄 Lecture du PDF en cours...")
             reader = PdfReader(uploaded_file)
             raw_text = ""
-            for page in reader.pages:
-                raw_text += page.extract_text() + "\n"
+            for page in reader.pages: raw_text += page.extract_text() + "\n"
             
-            # B. Kérès
-            status_box.write("👁️ Kérès : Anonymisation et Structuration...")
-            clean_text = call_gemini(P_KERES, raw_text[:30000]) # Limite safe
+            status_box.write("👁️ Kérès : Anonymisation...")
+            clean_text = call_gemini(P_KERES, raw_text[:30000])
             
-            # C. Trio Experts
-            status_box.write("⚡ Déploiement des Experts (Liorah, Ethan, Krypt)...")
+            status_box.write("⚡ Experts (Liorah, Ethan, Krypt)...")
             rep_liorah = call_gemini(P_LIORAH, clean_text)
-            status_box.write("⚖️ Liorah : Analyse Juridique terminée.")
             rep_ethan = call_gemini(P_ETHAN, clean_text)
-            status_box.write("🛡️ Ethan : Analyse Risques terminée.")
             rep_krypt = call_gemini(P_KRYPT, clean_text)
-            status_box.write("👾 Krypt : Analyse Data terminée.")
             
-            # D. Phoebe (Secret)
-            status_box.write("💎 Phoebe : Compilation et synthèse pour le Board...")
-            input_phoebe = f"Rapport LIORAH:\n{rep_liorah}\n\nRapport ETHAN:\n{rep_ethan}\n\nRapport KRYPT:\n{rep_krypt}"
+            status_box.write("💎 Phoebe : Synthèse...")
+            input_phoebe = f"LIORAH:\n{rep_liorah}\nETHAN:\n{rep_ethan}\nKRYPT:\n{rep_krypt}"
             rep_phoebe = call_gemini(P_PHOEBE, input_phoebe)
             
-            # E. Avenor (Verdict)
-            status_box.write("👑 Avenor : Délibération finale...")
+            status_box.write("👑 Avenor : Verdict...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             
             status_box.update(label="✅ Audit Terminé", state="complete", expanded=False)
             
-            # Sauvegarde du contexte pour le Chat
-            st.session_state.full_context = f"CONTEXTE DOSSIER:\n{clean_text}\n\nANALYSES:\n{input_phoebe}\n\nVERDICT:\n{rep_avenor}"
+            st.session_state.full_context = f"CONTEXTE:\n{clean_text}\nANALYSES:\n{input_phoebe}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
             
-            # Affichage Verdict
             st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
             st.rerun()
 
         except Exception as e:
             st.error(f"Erreur critique du Council : {e}")
 
-# --- ZONE DE CHAT (Se débloque APRES l'analyse) ---
+# --- ZONE DE CHAT ---
 if st.session_state.analysis_complete:
-    user_input = st.chat_input("Posez une question à Avenor sur le dossier...")
-    
+    user_input = st.chat_input("Posez une question à Avenor...")
     if user_input:
-        # Affiche message user
         st.session_state.messages.append({"role": "user", "name": "Stéphane", "avatar": AVATARS["user"], "content": user_input})
-        with st.chat_message("user", avatar=AVATARS["user"]):
-            st.write(user_input)
+        with st.chat_message("user", avatar=AVATARS["user"]): st.write(user_input)
             
-        # Réponse Avenor avec mémoire
         with st.spinner("Avenor réfléchit..."):
-            full_prompt = f"{P_CHAT_AVENOR}\n\nCONTEXTE COMPLET :\n{st.session_state.full_context}\n\nQUESTION UTILISATEUR : {user_input}"
-            
-            # On appelle Gemini (il joue le rôle d'Avenor Chat)
+            full_prompt = f"{P_CHAT_AVENOR}\nCTX:\n{st.session_state.full_context}\nQ: {user_input}"
             model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(full_prompt)
-            reply = response.text
+            reply = model.generate_content(full_prompt).text
             
-        # Affiche réponse
         st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
-        with st.chat_message("assistant", avatar=AVATARS["avenor"]):
-            st.write(reply)
+        with st.chat_message("assistant", avatar=AVATARS["avenor"]): st.write(reply)
