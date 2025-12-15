@@ -59,26 +59,18 @@ st.markdown("""
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
     
-    /* Progress Bar Color Hack */
-    .stProgress > div > div > div > div {
-        background-color: #E85D04;
-    }
+    /* Progress Bar */
+    .stProgress > div > div > div > div { background-color: #E85D04; }
     
-    /* Logs Steps */
-    .step-log {
-        padding: 8px;
+    /* Logs Success */
+    .success-log {
+        color: #4CAF50;
+        font-weight: bold;
+        padding: 10px;
+        border-left: 3px solid #4CAF50;
+        background-color: rgba(76, 175, 80, 0.1);
         margin-bottom: 5px;
-        border-left: 3px solid #E85D04;
-        background-color: rgba(255, 255, 255, 0.05);
         border-radius: 0 5px 5px 0;
-    }
-    .step-done { color: #4CAF50; font-weight: bold; }
-    .step-running { color: #FF9800; font-weight: bold; animation: pulse 1.5s infinite; }
-    
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,7 +95,7 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- FONCTION D'AFFICHAGE DU CONSEIL (HTML) ---
+# --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
     for member in ["keres", "liorah", "ethan", "krypt", "phoebe"]:
@@ -161,7 +153,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR ROBUSTE ---
+# --- FONCTION MOTEUR ---
 def call_gemini(role_prompt, user_content, retries=3):
     model = genai.GenerativeModel(MODEL_NAME)
     full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
@@ -173,14 +165,14 @@ def call_gemini(role_prompt, user_content, retries=3):
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "quota" in error_msg.lower():
-                time.sleep((attempt + 2) * 10) # Pause longue : 20s, 30s, 40s
+                time.sleep((attempt + 2) * 10) 
                 continue
             else:
                 return f"⚠️ Erreur Agent : {error_msg}"
-    return "⚠️ Erreur : Trafic saturé. Réessayez plus tard ou avec un fichier plus petit."
+    return "⚠️ Erreur : Trafic saturé. Réessayez plus tard."
 
 # --- PROMPTS ---
-P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE. Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
+P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE (Extrait). Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
 P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité). Analyse ce segment critique du DCE.
 ROLE 1 : LIORAH (Juridique) -> Cherche Pénalités, Assurances, Clauses abusives.
 ROLE 2 : ETHAN (Risques) -> Cherche Planning, Co-activité, Sécurité.
@@ -197,7 +189,7 @@ FORMAT STRICT :
 **Conseil Stratégique :** (1 action)"""
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
 
-# --- ZONE CHAT & AFFICHAGE CONSEIL ---
+# --- CHAT & AVATARS ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -226,50 +218,42 @@ if not st.session_state.analysis_complete:
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        # CONTENEURS POUR L'AFFICHAGE PROGRESSIF
+        # ZONE DE LOGS PERSISTANTS
+        log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
-        log_container = st.container() # Pour empiler les logs
         
-        # Fonction pour ajouter une ligne de log
-        def add_log(text, status="running"):
-            css = "step-running" if status == "running" else "step-done"
-            icon = "⏳" if status == "running" else "✅"
-            log_container.markdown(f'<div class="step-log {css}">{icon} {text}</div>', unsafe_allow_html=True)
-
         try:
             # ETAPE 1
             progress_bar.progress(10, text="Lecture du fichier...")
             reader = PdfReader(uploaded_file)
-            max_pages = min(50, len(reader.pages))
+            # TRONCATURE : 25 PAGES MAX
+            max_pages = min(25, len(reader.pages))
             raw_text = ""
             for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
+            log_container.markdown(f'<div class="success-log">✅ Lecture PDF ({max_pages} pages analysées)</div>', unsafe_allow_html=True)
             
             # ETAPE 2
-            progress_bar.progress(30, text="Action Kérès...")
-            add_log("Kérès : Analyse des pages clés...", "running")
-            clean_text = call_gemini(P_KERES, raw_text[:20000]) # Réduit un peu pour la sécurité
-            add_log("Kérès : Analyse terminée.", "done")
+            progress_bar.progress(30, text="Action Kérès en cours...")
+            clean_text = call_gemini(P_KERES, raw_text[:20000])
+            log_container.markdown('<div class="success-log">✅ Kérès : Analyse & Nettoyage terminés</div>', unsafe_allow_html=True)
             
             # ETAPE 3
-            progress_bar.progress(60, text="Action Trinité...")
-            add_log("Trinité (Liorah/Ethan/Krypt) : Scan en cours...", "running")
+            progress_bar.progress(60, text="Action Trinité (Experts) en cours...")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
-            add_log("Trinité : Rapports Experts générés.", "done")
+            log_container.markdown('<div class="success-log">✅ Trinité : Rapports Experts générés</div>', unsafe_allow_html=True)
             
             # ETAPE 4
-            progress_bar.progress(80, text="Action Phoebe...")
-            add_log("Phoebe : Compilation Stratégique...", "running")
+            progress_bar.progress(80, text="Action Phoebe en cours...")
             rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
-            add_log("Phoebe : Synthèse validée.", "done")
+            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse validée</div>', unsafe_allow_html=True)
             
             # ETAPE 5
-            progress_bar.progress(95, text="Action Avenor...")
-            add_log("Avenor : Délibération finale...", "running")
+            progress_bar.progress(95, text="Action Avenor en cours...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
-            add_log("Avenor : Verdict rendu.", "done")
+            log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             
             # FIN
-            progress_bar.progress(100, text="✅ Audit Terminé")
+            progress_bar.progress(100, text="Audit Terminé")
             time.sleep(1)
             progress_bar.empty()
             
