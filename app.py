@@ -4,8 +4,12 @@ from pypdf import PdfReader
 import os
 import base64
 
+# --- CONFIGURATION MOTEUR (2025 STANDARD) ---
+# On passe sur le modèle actuel. 
+# Si tu as accès au 3.0 Pro, tu peux changer ici par "gemini-3.0-pro"
+MODEL_NAME = "gemini-2.0-flash" 
+
 # --- FONCTION UTILITAIRE (BASE64) ---
-# Nécessaire pour afficher les images locales dans le HTML/CSS (Header & Avatars chat)
 def get_img_as_base64(file_path):
     try:
         with open(file_path, "rb") as f:
@@ -15,7 +19,6 @@ def get_img_as_base64(file_path):
         return ""
 
 # --- CONFIGURATION DE LA PAGE ---
-# On tente de charger le favicon, sinon fallback standard
 favicon_path = "assets/favicon.ico"
 page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
 
@@ -26,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- STYLES CSS (Cyber-BTP & UI Hacks) ---
+# --- STYLES CSS ---
 st.markdown("""
 <style>
     /* HACK : TRADUCTION DU DRAG & DROP STREAMLIT EN FRANCAIS */
@@ -35,17 +38,17 @@ st.markdown("""
     }
     [data-testid='stFileUploader'] section > div > div::after {
         content: "Glissez le dossier DCE (PDF) ici ou cliquez pour parcourir";
-        color: #E85D04; /* Orange BTP */
+        color: #E85D04;
         font-weight: bold;
         display: block;
         margin-top: 10px;
         font-family: 'Helvetica Neue', sans-serif;
     }
     [data-testid='stFileUploader'] section > div > div > small {
-        display: none; /* Masque le 'Limit 200MB...' */
+        display: none;
     }
 
-    /* Header Barel Vox Custom Flexbox */
+    /* Header */
     .header-container {
         display: flex;
         flex-direction: row;
@@ -78,7 +81,7 @@ st.markdown("""
         font-family: 'Courier New', monospace;
         font-weight: 600;
         margin-top: 5px;
-        white-space: nowrap; /* Force une seule ligne */
+        white-space: nowrap;
     }
     
     /* Avatars Chat */
@@ -88,12 +91,12 @@ st.markdown("""
         box-shadow: 0 0 10px rgba(232, 93, 4, 0.3);
     }
     
-    /* BOITES DE DECISION (Verdict) */
+    /* Verdict Colors */
     .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
     
-    /* Style pour la ligne d'avatars dans le chat */
+    /* Ligne d'avatars Intro */
     .council-row {
         display: flex;
         gap: 15px;
@@ -130,7 +133,6 @@ def get_asset_path(filename_part):
                 return path
     return "👤"
 
-# MAPPING STRICT
 AVATARS = {
     "user": "👤",
     "keres": get_asset_path("keres"),
@@ -143,12 +145,10 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- INITIALISATION SESSION STATE ---
+# --- SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
     
-    # Construction de la barre visuelle des avatars pour l'intro
-    # On encode les images en base64 pour les injecter dans le HTML du message
     council_html = '<div class="council-row">'
     for member in ["keres", "liorah", "ethan", "krypt", "phoebe"]:
         img_b64 = get_img_as_base64(AVATARS[member])
@@ -160,12 +160,11 @@ if "messages" not in st.session_state:
             </div>'''
     council_html += '</div>'
 
-    # Message Intro Avenor avec les avatars intégrés
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
         "avatar": AVATARS["avenor"],
-        "content": f"Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole.{council_html}"
+        "content": f"Le Council OEE est en session (Moteur {MODEL_NAME}). Mes experts sont connectés.<br>Déposez le DCE pour initier le protocole.{council_html}"
     })
 
 if "analysis_complete" not in st.session_state:
@@ -186,7 +185,7 @@ with st.sidebar:
     
     if api_key:
         genai.configure(api_key=api_key)
-        st.success("Moteur Connecté 🟢")
+        st.success(f"Moteur Connecté ({MODEL_NAME}) 🟢")
     else:
         st.warning("Moteur en attente...")
         
@@ -206,7 +205,7 @@ with st.sidebar:
         st.session_state.full_context = ""
         st.rerun()
 
-# --- HEADER UI (Flexbox pour alignement parfait) ---
+# --- HEADER UI ---
 logo_b64 = get_img_as_base64(AVATARS["logo"])
 header_html = f"""
 <div class="header-container">
@@ -219,17 +218,18 @@ header_html = f"""
 """
 st.markdown(header_html, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR ---
-def call_gemini(role_prompt, user_content, model_name="gemini-1.5-flash"):
+# --- FONCTION MOTEUR (UPDATED) ---
+def call_gemini(role_prompt, user_content):
     try:
-        model = genai.GenerativeModel(model_name)
+        # Appel du modèle défini en haut (gemini-2.0-flash)
+        model = genai.GenerativeModel(MODEL_NAME)
         full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
         return f"⚠️ Erreur Agent : {str(e)}"
 
-# --- PROMPTS DU COUNCIL ---
+# --- PROMPTS ---
 P_KERES = "Tu es KÉRÈS. TA MISSION : Anonymiser. Garde Prix, Dates, Pénalités, Normes. Enlève noms/emails. Texte propre."
 P_LIORAH = "Tu es LIORAH. Cherche : Pénalités non plafonnées, Manque assurances, Clauses abusives. Format Markdown Liste."
 P_ETHAN = "Tu es ETHAN. Crash-test. Cherche : Planning irréaliste, Co-activité, Sécurité oubliée. Ton sévère."
@@ -245,7 +245,7 @@ FORMAT STRICT :
 **Conseil Stratégique :** (1 action)"""
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client (Stéphane) sur le dossier analysé. Sois pro, direct, architecte senior."
 
-# --- AFFICHAGE HISTORIQUE CHAT ---
+# --- ZONE CHAT / HISTORIQUE ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
@@ -254,7 +254,6 @@ for msg in st.session_state.messages:
             elif "🟠" in msg["content"]: css_class = "decision-box-orange"
             st.markdown(f'<div class="{css_class}">{msg["content"]}</div>', unsafe_allow_html=True)
             
-            # Rappel visuel du conseil sous verdict
             st.markdown("<br><small>Conseil réuni :</small>", unsafe_allow_html=True)
             cols_sig = st.columns([1,1,1,1,10])
             with cols_sig[0]: st.image(AVATARS["keres"], width=40)
@@ -264,14 +263,12 @@ for msg in st.session_state.messages:
         else:
             if msg["role"] == "assistant":
                 st.markdown(f"**{msg['name']}**")
-                # Support HTML pour l'intro avec avatars
                 st.markdown(msg["content"], unsafe_allow_html=True)
             else:
                 st.write(msg["content"])
 
-# --- ZONE D'UPLOAD ---
+# --- UPLOAD ---
 if not st.session_state.analysis_complete:
-    # Le label est masqué/modifié par CSS, mais on garde un label technique propre
     uploaded_file = st.file_uploader("Upload DCE", type=['pdf'], label_visibility="collapsed")
 
     if uploaded_file:
@@ -283,7 +280,7 @@ if not st.session_state.analysis_complete:
         with st.chat_message("user", avatar=AVATARS["user"]):
             st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        status_box = st.status("🚀 Initialisation du Protocole OEE...", expanded=True)
+        status_box = st.status(f"🚀 Initialisation du Protocole OEE (Moteur {MODEL_NAME})...", expanded=True)
         try:
             status_box.write("📄 Lecture du PDF en cours...")
             reader = PdfReader(uploaded_file)
@@ -316,7 +313,7 @@ if not st.session_state.analysis_complete:
         except Exception as e:
             st.error(f"Erreur critique du Council : {e}")
 
-# --- ZONE DE CHAT ---
+# --- CHAT ---
 if st.session_state.analysis_complete:
     user_input = st.chat_input("Posez une question à Avenor...")
     if user_input:
@@ -325,7 +322,8 @@ if st.session_state.analysis_complete:
             
         with st.spinner("Avenor réfléchit..."):
             full_prompt = f"{P_CHAT_AVENOR}\nCTX:\n{st.session_state.full_context}\nQ: {user_input}"
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            # Appel Chat mis à jour avec le bon modèle
+            model = genai.GenerativeModel(MODEL_NAME)
             reply = model.generate_content(full_prompt).text
             
         st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
