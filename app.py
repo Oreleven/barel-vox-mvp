@@ -6,7 +6,6 @@ import base64
 import time
 
 # --- CONFIGURATION MOTEUR ---
-# On reste sur le 2.0 Flash, mais on l'utilise intelligemment
 MODEL_NAME = "gemini-2.0-flash" 
 
 # --- FONCTION UTILITAIRE (BASE64) ---
@@ -53,8 +52,9 @@ st.markdown("""
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
     
-    /* Council Row */
-    .council-row { display: flex; gap: 15px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
+    /* Council Row (Toujours visible) */
+    .council-container { margin-bottom: 20px; text-align:center; }
+    .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
@@ -81,18 +81,25 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- SESSION & INTRO ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    council_html = '<div class="council-row">'
+# --- FONCTION D'AFFICHAGE DU CONSEIL (HTML) ---
+def render_council():
+    html = '<div class="council-container"><div class="council-row">'
     for member in ["keres", "liorah", "ethan", "krypt", "phoebe"]:
         img_b64 = get_img_as_base64(AVATARS[member])
         if img_b64:
-            council_html += f'<div class="council-member"><img src="data:image/png;base64,{img_b64}" class="council-img"><br>{member.capitalize()}</div>'
-    council_html += '</div>'
+            html += f'<div class="council-member"><img src="data:image/png;base64,{img_b64}" class="council-img"><br>{member.capitalize()}</div>'
+    html += '</div></div>'
+    return html
+
+# --- SESSION ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    # Intro simple, le conseil est affiché en dur en dessous
     st.session_state.messages.append({
-        "role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"],
-        "content": f"Le Council OEE est en session (Moteur {MODEL_NAME}).<br>Déposez le DCE pour initier le protocole.{council_html}"
+        "role": "assistant",
+        "name": "Avenor",
+        "avatar": AVATARS["avenor"],
+        "content": f"Le Council OEE est en session. Mes experts sont connectés.<br>Déposez le DCE pour initier le protocole."
     })
 
 if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
@@ -111,7 +118,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
     st.markdown("**Kérès** : 🟢 Prêt")
-    st.markdown("**Trinité** (Liorah/Ethan/Krypt) : 🟢 Prêts")
+    st.markdown("**Trinité** : 🟢 Prêts")
     st.markdown("**Phoebe** : 🟢 Prête")
     st.markdown("**Avenor** : 🟢 En attente")
     st.markdown("---")
@@ -145,42 +152,20 @@ def call_gemini(role_prompt, user_content, retries=3):
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "quota" in error_msg.lower():
-                wait_time = (attempt + 1) * 10 # 10s, 20s, 30s (Pause plus longue !)
-                time.sleep(wait_time)
+                time.sleep((attempt + 2) * 5) # Pause incrémentale
                 continue
             else:
                 return f"⚠️ Erreur Agent : {error_msg}"
     return "⚠️ Erreur : Trafic saturé. Réessayez."
 
-# --- PROMPTS FUSIONNÉS (PROTOCOLE TRINITÉ) ---
-P_KERES = "Tu es KÉRÈS. Anonymise et structure. Garde Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
-
-# LE GRAND PROMPT FUSIONNÉ POUR ÉCONOMISER LES APPELS
-P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité).
-Tu dois analyser le document sous 3 angles distincts simultanément.
-
----
-ROLE 1 : LIORAH (Juridique)
-Cherche : Pénalités non plafonnées, Manque assurances, Clauses abusives.
----
-ROLE 2 : ETHAN (Risques & Contradiction)
-Cherche : Planning irréaliste, Co-activité dangereuse, Sécurité oubliée. Sois sévère.
----
-ROLE 3 : KRYPT (Data & Anomalies)
-Cherche : Incohérences unités, Matériaux obsolètes, Chiffres aberrants.
-
-FORMAT DE SORTIE STRICT :
-## RAPPORT LIORAH
-(Ton analyse ici)
-
-## RAPPORT ETHAN
-(Ton analyse ici)
-
-## RAPPORT KRYPT
-(Ton analyse ici)
-"""
-
-P_PHOEBE = "Tu es PHOEBE. Synthèse. Fusionne le rapport complet de la Trinité ci-dessous. Garde uniquement les points bloquants."
+# --- PROMPTS ---
+P_KERES = "Tu es KÉRÈS. Analyse ce début de DCE. Anonymise et structure les infos clés : Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
+P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité). Analyse ce segment critique du DCE.
+ROLE 1 : LIORAH (Juridique) -> Cherche Pénalités, Assurances, Clauses abusives.
+ROLE 2 : ETHAN (Risques) -> Cherche Planning, Co-activité, Sécurité.
+ROLE 3 : KRYPT (Data) -> Cherche Incohérences chiffres/unités.
+FORMAT SORTIE: 3 paragraphes distincts (LIORAH, ETHAN, KRYPT)."""
+P_PHOEBE = "Tu es PHOEBE. Synthèse. Fusionne le rapport ci-dessous. Garde uniquement les points bloquants et critiques."
 P_AVENOR = """Tu es AVENOR. Arbitre.
 ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
 FORMAT STRICT :
@@ -191,7 +176,10 @@ FORMAT STRICT :
 **Conseil Stratégique :** (1 action)"""
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
 
-# --- ZONE CHAT ---
+# --- ZONE CHAT & AFFICHAGE CONSEIL ---
+# On affiche les avatars en permanence sous le titre pour qu'ils ne disparaissent pas
+st.markdown(render_council(), unsafe_allow_html=True)
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
@@ -199,12 +187,6 @@ for msg in st.session_state.messages:
             if "🔴" in msg["content"]: css_class = "decision-box-red"
             elif "🟠" in msg["content"]: css_class = "decision-box-orange"
             st.markdown(f'<div class="{css_class}">{msg["content"]}</div>', unsafe_allow_html=True)
-            st.markdown("<br><small>Conseil réuni :</small>", unsafe_allow_html=True)
-            cols_sig = st.columns([1,1,1,1,10])
-            with cols_sig[0]: st.image(AVATARS["keres"], width=40)
-            with cols_sig[1]: st.image(AVATARS["liorah"], width=40)
-            with cols_sig[2]: st.image(AVATARS["ethan"], width=40)
-            with cols_sig[3]: st.image(AVATARS["krypt"], width=40)
         else:
             if msg["role"] == "assistant":
                 st.markdown(f"**{msg['name']}**")
@@ -226,34 +208,31 @@ if not st.session_state.analysis_complete:
             
         status_box = st.status(f"🚀 Initialisation du Protocole OEE...", expanded=True)
         try:
-            status_box.write("📄 Lecture du PDF...")
+            status_box.write("📄 Lecture du PDF (Extraction Optimisée)...")
             reader = PdfReader(uploaded_file)
+            
+            # --- OPTIMISATION : ON NE LIT QUE LES 50 PREMIÈRES PAGES POUR LE MVP ---
+            # Cela évite le crash sur les gros CCTP tout en gardant l'essentiel
+            max_pages = min(50, len(reader.pages)) 
             raw_text = ""
-            for page in reader.pages: raw_text += page.extract_text() + "\n"
+            for i in range(max_pages):
+                raw_text += reader.pages[i].extract_text() + "\n"
             
-            # 1. KÉRÈS (Appel 1)
-            status_box.write("👁️ Kérès : Anonymisation...")
-            clean_text = call_gemini(P_KERES, raw_text[:30000])
-            time.sleep(5) # Pause de sécurité
+            status_box.write(f"👁️ Kérès : Analyse des {max_pages} pages clés...")
+            clean_text = call_gemini(P_KERES, raw_text[:25000]) # Limite charactères pour vitesse
             
-            # 2. TRINITÉ (Appel 2 - FUSIONNÉ)
-            status_box.write("⚡ Déploiement Trinité (Liorah, Ethan, Krypt)...")
+            status_box.write("⚡ Trinité : Scan Juridique, Risques & Data...")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
-            status_box.write("✅ Rapports Experts générés.")
-            time.sleep(5) # Pause de sécurité
             
-            # 3. PHOEBE (Appel 3)
-            status_box.write("💎 Phoebe : Compilation...")
+            status_box.write("💎 Phoebe : Compilation Stratégique...")
             rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
-            time.sleep(2)
             
-            # 4. AVENOR (Appel 4)
             status_box.write("👑 Avenor : Verdict...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             
             status_box.update(label="✅ Audit Terminé", state="complete", expanded=False)
             
-            st.session_state.full_context = f"CONTEXTE:\n{clean_text}\nANALYSES COMPLÈTES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
+            st.session_state.full_context = f"CTX (Extrait):\n{clean_text}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
             
             st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
