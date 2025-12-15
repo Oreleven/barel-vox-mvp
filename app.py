@@ -85,6 +85,7 @@ def get_asset_path(filename_part):
 
 AVATARS = {
     "user": "👤",
+    "evena": get_asset_path("evena"), # NEW
     "keres": get_asset_path("keres"),
     "liorah": get_asset_path("liorah"),
     "ethan": get_asset_path("ethan"),
@@ -98,7 +99,8 @@ AVATARS = {
 # --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
-    for member in ["keres", "liorah", "ethan", "krypt", "phoebe"]:
+    # Ajout d'Evena dans la liste visuelle
+    for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
         img_b64 = get_img_as_base64(AVATARS[member])
         if img_b64:
             html += f'<div class="council-member"><img src="data:image/png;base64,{img_b64}" class="council-img"><br>{member.capitalize()}</div>'
@@ -108,11 +110,12 @@ def render_council():
 # --- SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    # Rétablissement de l'intro d'Avenor
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
         "avatar": AVATARS["avenor"],
-        "content": f"Le Council OEE est en session. Mes experts sont connectés.<br>Déposez le DCE pour initier le protocole."
+        "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
     })
 
 if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
@@ -130,13 +133,21 @@ with st.sidebar:
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
-    st.markdown("**Kérès** : 🟢 Prêt")
-    st.markdown("**Trinité** : 🟢 Prêts")
-    st.markdown("**Phoebe** : 🟢 Prête")
-    st.markdown("**Avenor** : 🟢 En attente")
+    st.markdown("**Evena** (Orchestratrice) : 🟢 Prête") # NEW
+    st.markdown("**Kérès** (Nettoyeur) : 🟢 Prêt")
+    st.markdown("**Trinité** (Experts) : 🟢 Prêts")
+    st.markdown("**Phoebe** (Synthèse) : 🟢 Prête")
+    st.markdown("**Avenor** (Arbitre) : 🟢 En attente")
     st.markdown("---")
     if st.button("🔄 Reset Session"):
         st.session_state.messages = []
+        # On remet l'intro au reset
+        st.session_state.messages.append({
+            "role": "assistant",
+            "name": "Avenor",
+            "avatar": AVATARS["avenor"],
+            "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
+        })
         st.session_state.analysis_complete = False
         st.session_state.full_context = ""
         st.rerun()
@@ -218,36 +229,38 @@ if not st.session_state.analysis_complete:
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        # ZONE DE LOGS PERSISTANTS
+        # ZONE DE LOGS
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
         
         try:
-            # ETAPE 1
-            progress_bar.progress(10, text="Lecture du fichier...")
+            # ETAPE 1 : EVENA
+            progress_bar.progress(10, text="Evena : Lecture du fichier...")
             reader = PdfReader(uploaded_file)
-            # TRONCATURE : 25 PAGES MAX
             max_pages = min(25, len(reader.pages))
             raw_text = ""
             for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
-            log_container.markdown(f'<div class="success-log">✅ Lecture PDF ({max_pages} pages analysées)</div>', unsafe_allow_html=True)
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF terminée</div>', unsafe_allow_html=True)
             
-            # ETAPE 2
+            # ETAPE 2 : KERES
             progress_bar.progress(30, text="Action Kérès en cours...")
             clean_text = call_gemini(P_KERES, raw_text[:20000])
-            log_container.markdown('<div class="success-log">✅ Kérès : Analyse & Nettoyage terminés</div>', unsafe_allow_html=True)
+            log_container.markdown('<div class="success-log">✅ Kérès : Anonymisation effectuée</div>', unsafe_allow_html=True)
             
-            # ETAPE 3
+            # ETAPE 3 : TRINITE
             progress_bar.progress(60, text="Action Trinité (Experts) en cours...")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
             log_container.markdown('<div class="success-log">✅ Trinité : Rapports Experts générés</div>', unsafe_allow_html=True)
             
-            # ETAPE 4
+            # ETAPE 4 : PHOEBE
             progress_bar.progress(80, text="Action Phoebe en cours...")
             rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
             log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse validée</div>', unsafe_allow_html=True)
             
-            # ETAPE 5
+            # PAUSE TACTIQUE AVANT AVENOR (Pour éviter le 429)
+            time.sleep(5) 
+            
+            # ETAPE 5 : AVENOR
             progress_bar.progress(95, text="Action Avenor en cours...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
