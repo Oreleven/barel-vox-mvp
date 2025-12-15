@@ -4,7 +4,8 @@ from pypdf import PdfReader
 import os
 import base64
 import time
-import re # Pour le nettoyage regex
+import json
+import re
 
 # --- CONFIGURATION MOTEUR ---
 MODEL_NAME = "gemini-2.0-flash" 
@@ -63,15 +64,10 @@ st.markdown("""
     /* Progress Bar */
     .stProgress > div > div > div > div { background-color: #E85D04; }
     
-    /* Logs Success */
+    /* Logs */
     .success-log {
-        color: #4CAF50;
-        font-weight: bold;
-        padding: 10px;
-        border-left: 3px solid #4CAF50;
-        background-color: rgba(76, 175, 80, 0.1);
-        margin-bottom: 5px;
-        border-radius: 0 5px 5px 0;
+        color: #4CAF50; font-weight: bold; padding: 10px; border-left: 3px solid #4CAF50;
+        background-color: rgba(76, 175, 80, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -166,64 +162,95 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR (Robustesse) ---
-def call_gemini(role_prompt, user_content, agent_name, retries=5):
-    model = genai.GenerativeModel(MODEL_NAME)
-    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
-    for attempt in range(retries):
-        try:
-            response = model.generate_content(full_prompt)
-            return response.text
-        except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                time.sleep((attempt + 1) * 15)
-                continue
-            else:
-                return f"⚠️ Erreur Agent {agent_name} : {str(e)}"
-    return f"⚠️ Trafic saturé pour {agent_name}."
-
-# --- FONCTION NETTOYAGE PYTHON (EVENA) ---
-# Compresse le texte pour économiser des tokens sans IA
-def python_clean_text(text):
-    text = re.sub(r'\n+', '\n', text) # Supprime sauts de ligne multiples
-    text = re.sub(r'\s+', ' ', text)  # Supprime espaces multiples
-    return text
-
-# --- LOGIQUE PHOEBE (PYTHON) ---
-def phoebe_processing(keres_info, trinity_report):
-    return f"""
-    ## 💎 RAPPORT DE SYNTHÈSE (PHOEBE)
-    **Données du projet :**
-    {keres_info}
+# --- 1. EVENA : EXTRACTION JSON (Python Pur) ---
+def evena_extract_json(reader):
+    # Transforme le PDF en structure JSON (Page par Page)
+    # Plus léger à manipuler pour le Python qu'un String géant
+    doc_structure = {}
+    total_text_length = 0
     
-    **Analyse Technique (Trinité) :**
-    {trinity_report}
-    """
+    # On limite intelligemment à 80 pages pour le MVP
+    max_pages = min(80, len(reader.pages))
+    
+    for i in range(max_pages):
+        page_content = reader.pages[i].extract_text()
+        # Nettoyage primaire immédiat
+        page_content = re.sub(r'\n+', ' ', page_content) # Supprime sauts de ligne
+        page_content = re.sub(r'\s+', ' ', page_content) # Supprime double espaces
+        doc_structure[f"page_{i+1}"] = page_content
+        total_text_length += len(page_content)
+        
+    return doc_structure, total_text_length
 
-# --- PROMPTS OPTIMISÉS (TOKEN SAVING) ---
-# Kérès ne réécrit plus, il extrait juste (petit output)
-P_KERES = "Tu es KÉRÈS. Extrais uniquement la 'Fiche d'identité' du projet de ce texte : Maître d'ouvrage, Lieu, Dates clés, Montant si dispo, Type de travaux. Format court liste à puces. N'invente rien."
+# --- 2. KERES : ANONYMISATION (Simulation Python) ---
+def keres_anonymize_json(json_data):
+    # Regex simple pour simuler le travail sans appel API
+    # On remplace les patterns d'emails et téléphones
+    str_data = json.dumps(json_data, ensure_ascii=False)
+    
+    # Anonymisation basique
+    str_data = re.sub(r'[\w\.-]+@[\w\.-]+', '[EMAIL_HIDDEN]', str_data)
+    str_data = re.sub(r'\b0[1-9]([-. ]?[0-9]{2}){4}\b', '[PHONE_HIDDEN]', str_data)
+    
+    return str_data # Retourne un String JSON ready pour l'API
 
-# Trinité bosse directement sur le texte brut nettoyé
-P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité). Analyse ce segment critique du DCE.
-ROLE 1 : LIORAH (Juridique) -> Cherche Pénalités, Assurances, Clauses abusives.
-ROLE 2 : ETHAN (Risques) -> Cherche Planning, Co-activité, Sécurité.
-ROLE 3 : KRYPT (Data) -> Cherche Incohérences chiffres/unités.
-FORMAT SORTIE: 3 paragraphes distincts (LIORAH, ETHAN, KRYPT)."""
+# --- API GEMINI (MODE JSON) ---
+def call_gemini_json(role_prompt, user_content):
+    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"})
+    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT JSON SOURCE :\n{user_content}"
+    try:
+        response = model.generate_content(full_prompt)
+        return json.loads(response.text)
+    except Exception as e:
+        return {"error": str(e)}
 
+# --- API GEMINI (MODE TEXTE FINAL) ---
+def call_gemini_text(role_prompt, user_content):
+    model = genai.GenerativeModel(MODEL_NAME)
+    full_prompt = f"{role_prompt}\n\n---\n\nDONNÉES STRUCTURÉES :\n{user_content}"
+    try:
+        response = model.generate_content(full_prompt)
+        return response.text
+    except Exception as e:
+        return f"Erreur : {str(e)}"
+
+# --- PROMPTS ---
+# Trinité travaille sur le JSON et renvoie du JSON (Super efficace)
+P_TRINITE = """
+Tu es le moteur d'analyse du CONSEIL OEE.
+Analyse ce contenu JSON (DCE BTP).
+Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
+Pour chaque clé, fournis :
+- "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
+- "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
+
+RÔLES :
+1. LIORAH (Juridique) : Pénalités, Assurances, Normes manquantes.
+2. ETHAN (Risques) : Planning, Co-activité, Sécurité.
+3. KRYPT (Data) : Incohérences chiffres/unités.
+"""
+
+# Avenor ne reçoit QUE le JSON de Trinité (Pas le document source)
 P_AVENOR = """Tu es AVENOR. Arbitre.
-Voici la synthèse du dossier.
-ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
-FORMAT STRICT :
-[FLAG : X]
+Voici les rapports JSON des experts.
+Synthétise et Tranche pour le client.
+
+ALGO :
+- Si un expert a mis 🔴 -> Verdict 🔴 (DANGER)
+- Si majorité 🟠 -> Verdict 🟠 (VIGILANCE)
+- Sinon -> 🟢 (RAS)
+
+FORMAT DE SORTIE :
+[FLAG : X] (Mets l'émoji ici)
+
 ### DÉCISION DU CONSEIL
 **Verdict :** (2 phrases max, direct)
 **Points de Vigilance :** (Top 3)
 **Conseil Stratégique :** (1 action)"""
 
-P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
+P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, direct, expert BTP."
 
-# --- CHAT & AVATARS ---
+# --- CHAT UI ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -240,7 +267,7 @@ for msg in st.session_state.messages:
             else:
                 st.write(msg["content"])
 
-# --- EXECUTION ---
+# --- EXECUTION FLOW ---
 if not st.session_state.analysis_complete:
     uploaded_file = st.file_uploader("Upload DCE", type=['pdf'], label_visibility="collapsed")
 
@@ -256,54 +283,59 @@ if not st.session_state.analysis_complete:
         progress_bar = st.progress(0, text="Initialisation...")
         
         try:
-            # ETAPE 1 : EVENA (Lecture + Compression Python)
-            progress_bar.progress(10, text="Evena : Lecture & Compression...")
+            # 1. EVENA (Python Pur - Extraction JSON)
+            progress_bar.progress(10, text="Evena : Lecture & Structure JSON...")
             reader = PdfReader(uploaded_file)
-            # ON MONTE A 80 PAGES GRACE A LA COMPRESSION
-            max_pages = min(80, len(reader.pages)) 
-            raw_text = ""
-            for i in range(max_pages): raw_text += reader.pages[i].extract_text() + "\n"
+            json_doc, doc_len = evena_extract_json(reader)
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction JSON terminée (Volume: {doc_len} chars)</div>', unsafe_allow_html=True)
             
-            # Nettoyage Python (Gratuit)
-            optimized_text = python_clean_text(raw_text)
-            
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction PDF Optimisée ({max_pages} pages)</div>', unsafe_allow_html=True)
-            
-            # ETAPE 2 : KERES (Extraction Métadonnées uniquement -> Petit Coût)
-            time.sleep(2)
-            progress_bar.progress(30, text="Action Kérès en cours...")
-            # On envoie seulement le début pour l'identité du projet
-            keres_info = call_gemini(P_KERES, optimized_text[:10000], "Kérès")
-            log_container.markdown('<div class="success-log">✅ Kérès : Fiche Identité extraite</div>', unsafe_allow_html=True)
-            
-            # ETAPE 3 : TRINITE (Analyse sur Texte Optimisé -> Coût Moyen)
-            time.sleep(5)
-            progress_bar.progress(60, text="Action Trinité (Experts) en cours...")
-            # Trinité analyse le texte compressé direct (pas besoin que Kérès le réécrive)
-            rep_trinity = call_gemini(P_TRINITY, optimized_text[:30000], "Trinité") 
-            log_container.markdown('<div class="success-log">✅ Trinité : Rapports Experts générés</div>', unsafe_allow_html=True)
-            
-            # ETAPE 4 : PHOEBE (Python pur)
+            # 2. KERES (Python Pur - Anonymisation Regex)
             time.sleep(1)
-            progress_bar.progress(80, text="Action Phoebe en cours...")
-            rep_phoebe = phoebe_processing(keres_info, rep_trinity)
-            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse structurée</div>', unsafe_allow_html=True)
+            progress_bar.progress(30, text="Kérès : Anonymisation du JSON...")
+            clean_json_str = keres_anonymize_json(json_doc)
+            log_container.markdown('<div class="success-log">✅ Kérès : Données anonymisées et nettoyées</div>', unsafe_allow_html=True)
             
-            # ETAPE 5 : AVENOR (Verdict -> Petit Coût)
-            time.sleep(5)
-            progress_bar.progress(95, text="Action Avenor en cours...")
-            rep_avenor = call_gemini(P_AVENOR, rep_phoebe, "Avenor")
-            log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
+            # 3. TRINITÉ (API 1 - Envoi du JSON pour analyse)
+            time.sleep(2)
+            progress_bar.progress(60, text="Trinité : Analyse Expert (Appel Unique)...")
             
-            # FIN
+            # On envoie les 60 000 premiers caractères du JSON pour être sûr de passer (env 20-30 pages denses)
+            # C'est la limite safe pour le Free Tier en un seul appel
+            trinity_result = call_gemini_json(P_TRINITE, clean_json_str[:60000])
+            
+            if "error" in trinity_result:
+                raise Exception(trinity_result["error"])
+            
+            log_container.markdown(f'''
+            <div class="success-log">
+            ✅ <b>Trinité : Rapports Validés</b><br>
+            - Juridique : {trinity_result.get('liorah', {}).get('flag', '❓')}<br>
+            - Risques : {trinity_result.get('ethan', {}).get('flag', '❓')}<br>
+            - Data : {trinity_result.get('krypt', {}).get('flag', '❓')}
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            # 4. PHOEBE (Formatage Python - Pas d'API)
+            time.sleep(1)
+            progress_bar.progress(80, text="Phoebe : Compilation...")
+            log_container.markdown('<div class="success-log">✅ Phoebe : Dossier transmis à Avenor</div>', unsafe_allow_html=True)
+            
+            # 5. AVENOR (API 2 - Verdict sur le JSON de Trinité)
+            time.sleep(2)
+            progress_bar.progress(95, text="Avenor : Verdict final...")
+            
+            # Avenor ne lit que le résultat de Trinité (très léger)
+            verdict = call_gemini_text(P_AVENOR, json.dumps(trinity_result))
+            
             progress_bar.progress(100, text="Audit Terminé")
             time.sleep(1)
             progress_bar.empty()
             
-            st.session_state.full_context = f"PROJET:\n{keres_info}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
+            # Sauvegarde pour le Chat
+            st.session_state.full_context = f"ANALYSE EXPERTS:\n{json.dumps(trinity_result)}\nVERDICT:\n{verdict}"
             st.session_state.analysis_complete = True
             
-            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
+            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": verdict})
             st.rerun()
 
         except Exception as e:
