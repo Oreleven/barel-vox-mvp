@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from pypdf import PdfReader
+import os
 import base64
 import time
 import json
@@ -20,6 +21,7 @@ def get_img_as_base64(file_path):
 
 # --- CONFIGURATION DE LA PAGE ---
 favicon_path = "assets/favicon.ico"
+# C'est ici que ça plantait avant (os n'était pas importé)
 page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
 
 st.set_page_config(
@@ -32,30 +34,65 @@ st.set_page_config(
 # --- STYLES CSS ---
 st.markdown("""
 <style>
+    /* UI Hacks Upload & Header */
     [data-testid='stFileUploader'] section > div > div > span { display: none; }
     [data-testid='stFileUploader'] section > div > div::after {
         content: "Glissez le dossier DCE (PDF) ici ou cliquez pour parcourir";
         color: #E85D04; font-weight: bold; display: block; margin-top: 10px; font-family: 'Helvetica Neue', sans-serif;
     }
     [data-testid='stFileUploader'] section > div > div > small { display: none; }
+
     .header-container { display: flex; flex-direction: row; align-items: center; margin-bottom: 2rem; gap: 20px; }
     .header-logo { width: 100px; height: auto; }
     .header-text-block { display: flex; flex-direction: column; justify-content: center; }
     .main-header { font-size: 3.5rem; color: #E85D04; font-weight: 800; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 2px; line-height: 1; margin: 0; }
     .sub-header { font-size: 1.1rem; color: #888; font-family: 'Courier New', monospace; font-weight: 600; margin-top: 5px; white-space: nowrap; }
+    
     .stChatMessage .stChatMessageAvatar { border: 2px solid #E85D04; border-radius: 50%; box-shadow: 0 0 10px rgba(232, 93, 4, 0.3); }
+    
+    /* Verdict Boxes */
     .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
+    
+    /* Council Row */
     .council-container { margin-bottom: 20px; text-align:center; }
     .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; object-fit: cover; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
+    
+    /* Progress Bar */
     .stProgress > div > div > div > div { background-color: #E85D04; }
-    .success-log { color: #4CAF50; font-weight: bold; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; }
-    .waiting-log { color: #FF9800; font-weight: bold; padding: 10px; border-left: 3px solid #FF9800; background-color: rgba(255, 152, 0, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; animation: pulse 2s infinite;}
-    @keyframes pulse { 0% {opacity: 1;} 50% {opacity: 0.6;} 100% {opacity: 1;} }
+    
+    /* Logs Success */
+    .success-log {
+        color: #4CAF50;
+        font-weight: bold;
+        padding: 10px;
+        border-left: 3px solid #4CAF50;
+        background-color: rgba(76, 175, 80, 0.1);
+        margin-bottom: 5px;
+        border-radius: 0 5px 5px 0;
+    }
+    
+    /* Logs Waiting */
+    .waiting-log {
+        color: #FF9800;
+        font-weight: bold;
+        padding: 10px;
+        border-left: 3px solid #FF9800;
+        background-color: rgba(255, 152, 0, 0.1);
+        margin-bottom: 5px;
+        border-radius: 0 5px 5px 0;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.6; }
+        100% { opacity: 1; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,14 +117,16 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- RENDER COUNCIL ---
+# --- RENDER COUNCIL (HTML) ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
         path = AVATARS[member]
         img_b64 = get_img_as_base64(path)
-        if img_b64: src = f"data:image/png;base64,{img_b64}"
-        else: src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
+        if img_b64:
+            src = f"data:image/png;base64,{img_b64}"
+        else:
+            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
@@ -96,7 +135,9 @@ def render_council():
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
-        "role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"],
+        "role": "assistant",
+        "name": "Avenor",
+        "avatar": AVATARS["avenor"],
         "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
     })
 
@@ -115,16 +156,18 @@ with st.sidebar:
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
-    st.markdown("**Evena** : 🟢 Prête")
-    st.markdown("**Kérès** : 🟢 Prêt")
-    st.markdown("**Trinité** : 🟢 Prêts")
-    st.markdown("**Phoebe** : 🟢 Prête")
-    st.markdown("**Avenor** : 🟢 En attente")
+    st.markdown("**Evena** (Orchestratrice) : 🟢 Prête")
+    st.markdown("**Kérès** (Nettoyeur) : 🟢 Prêt")
+    st.markdown("**Trinité** (Experts) : 🟢 Prêts")
+    st.markdown("**Phoebe** (Synthèse) : 🟢 Prête")
+    st.markdown("**Avenor** (Arbitre) : 🟢 En attente")
     st.markdown("---")
     if st.button("🔄 Reset Session"):
         st.session_state.messages = []
         st.session_state.messages.append({
-            "role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"],
+            "role": "assistant",
+            "name": "Avenor",
+            "avatar": AVATARS["avenor"],
             "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
         })
         st.session_state.analysis_complete = False
@@ -143,7 +186,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR "IMMORTELLE" ---
+# --- FONCTION MOTEUR "IMMORTELLE" (Retry Infini) ---
 def call_gemini_resilient(role_prompt, user_content, agent_name, output_json=False, status_placeholder=None):
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
     full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
@@ -240,7 +283,7 @@ if not st.session_state.analysis_complete:
             
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
-        status_placeholder = st.empty() # Pour les messages d'attente
+        status_placeholder = st.empty() # Placeholder pour les messages d'attente
         
         try:
             # 1. EVENA
@@ -257,11 +300,9 @@ if not st.session_state.analysis_complete:
             
             # 3. TRINITE (API RESILIENTE)
             progress_bar.progress(60, text="Trinité : Scan Expert...")
-            # On passe le placeholder pour afficher les messages d'attente
+            # Appel avec retry infini et feedback visuel
             trinity_result = call_gemini_resilient(P_TRINITE, clean_json_str[:60000], "Trinité", output_json=True, status_placeholder=status_placeholder)
-            
-            # Nettoyage du placeholder d'attente
-            status_placeholder.empty()
+            status_placeholder.empty() # On efface le message d'attente s'il y en avait un
             
             log_container.markdown(f'''
             <div class="success-log">
@@ -309,7 +350,7 @@ if st.session_state.analysis_complete:
             try:
                 model = genai.GenerativeModel(MODEL_NAME)
                 reply = model.generate_content(full_prompt).text
-            except: reply = "Désolé, je suis surchargé. Réessayez."
+            except: reply = "Désolé, je suis surchargé. Réessayez dans quelques secondes."
             
         st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
         with st.chat_message("assistant", avatar=AVATARS["avenor"]): st.write(reply)
