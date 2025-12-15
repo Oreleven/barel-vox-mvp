@@ -3,10 +3,10 @@ import google.generativeai as genai
 from pypdf import PdfReader
 import os
 import base64
-import time # Important pour la temporisation
+import time
 
 # --- CONFIGURATION MOTEUR ---
-# Si le 2.0 est trop instable en Free Tier, remets "gemini-1.5-flash"
+# On reste sur le 2.0 Flash, mais on l'utilise intelligemment
 MODEL_NAME = "gemini-2.0-flash" 
 
 # --- FONCTION UTILITAIRE (BASE64) ---
@@ -111,9 +111,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
     st.markdown("**Kérès** : 🟢 Prêt")
-    st.markdown("**Liorah** : 🟢 Prête")
-    st.markdown("**Ethan** : 🟢 Prêt")
-    st.markdown("**Krypt** : 🟢 Prêt")
+    st.markdown("**Trinité** (Liorah/Ethan/Krypt) : 🟢 Prêts")
     st.markdown("**Phoebe** : 🟢 Prête")
     st.markdown("**Avenor** : 🟢 En attente")
     st.markdown("---")
@@ -135,7 +133,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR ROBUSTE (AVEC RETRY) ---
+# --- FONCTION MOTEUR ROBUSTE ---
 def call_gemini(role_prompt, user_content, retries=3):
     model = genai.GenerativeModel(MODEL_NAME)
     full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
@@ -146,22 +144,43 @@ def call_gemini(role_prompt, user_content, retries=3):
             return response.text
         except Exception as e:
             error_msg = str(e)
-            # Si c'est une erreur de quota (429), on attend et on réessaie
-            if "429" in error_msg:
-                wait_time = (attempt + 1) * 5 # Attente progressive : 5s, 10s, 15s...
+            if "429" in error_msg or "quota" in error_msg.lower():
+                wait_time = (attempt + 1) * 10 # 10s, 20s, 30s (Pause plus longue !)
                 time.sleep(wait_time)
-                continue # On recommence la boucle
+                continue
             else:
                 return f"⚠️ Erreur Agent : {error_msg}"
-    
-    return "⚠️ Erreur : Trafic API saturé après 3 tentatives. Réessayez plus tard."
+    return "⚠️ Erreur : Trafic saturé. Réessayez."
 
-# --- PROMPTS ---
+# --- PROMPTS FUSIONNÉS (PROTOCOLE TRINITÉ) ---
 P_KERES = "Tu es KÉRÈS. Anonymise et structure. Garde Prix, Dates, Pénalités, Normes. Supprime Noms. Pas de blabla."
-P_LIORAH = "Tu es LIORAH. Juridique. Cherche : Pénalités non plafonnées, Manque assurances, Clauses abusives. Format Markdown Liste."
-P_ETHAN = "Tu es ETHAN. Risques. Cherche : Planning irréaliste, Co-activité, Sécurité. Ton sévère."
-P_KRYPT = "Tu es KRYPT. Data. Cherche : Incohérences unités, Matériaux obsolètes, Chiffres louches."
-P_PHOEBE = "Tu es PHOEBE. Synthèse. Fusionne Liorah, Ethan, Krypt. Garde uniquement les points bloquants."
+
+# LE GRAND PROMPT FUSIONNÉ POUR ÉCONOMISER LES APPELS
+P_TRINITY = """Tu es le CONSEIL TECHNIQUE (La Trinité).
+Tu dois analyser le document sous 3 angles distincts simultanément.
+
+---
+ROLE 1 : LIORAH (Juridique)
+Cherche : Pénalités non plafonnées, Manque assurances, Clauses abusives.
+---
+ROLE 2 : ETHAN (Risques & Contradiction)
+Cherche : Planning irréaliste, Co-activité dangereuse, Sécurité oubliée. Sois sévère.
+---
+ROLE 3 : KRYPT (Data & Anomalies)
+Cherche : Incohérences unités, Matériaux obsolètes, Chiffres aberrants.
+
+FORMAT DE SORTIE STRICT :
+## RAPPORT LIORAH
+(Ton analyse ici)
+
+## RAPPORT ETHAN
+(Ton analyse ici)
+
+## RAPPORT KRYPT
+(Ton analyse ici)
+"""
+
+P_PHOEBE = "Tu es PHOEBE. Synthèse. Fusionne le rapport complet de la Trinité ci-dessous. Garde uniquement les points bloquants."
 P_AVENOR = """Tu es AVENOR. Arbitre.
 ALGO : Danger/Illégal -> 🔴. Doutes -> 🟠. RAS -> 🟢.
 FORMAT STRICT :
@@ -212,37 +231,29 @@ if not st.session_state.analysis_complete:
             raw_text = ""
             for page in reader.pages: raw_text += page.extract_text() + "\n"
             
-            # KÉRÈS
+            # 1. KÉRÈS (Appel 1)
             status_box.write("👁️ Kérès : Anonymisation...")
             clean_text = call_gemini(P_KERES, raw_text[:30000])
-            time.sleep(2) # Pause tactique pour quota
+            time.sleep(5) # Pause de sécurité
             
-            # TRIO EXPERTS (Avec pauses)
-            status_box.write("⚡ Liorah (Juridique)...")
-            rep_liorah = call_gemini(P_LIORAH, clean_text)
-            time.sleep(2)
+            # 2. TRINITÉ (Appel 2 - FUSIONNÉ)
+            status_box.write("⚡ Déploiement Trinité (Liorah, Ethan, Krypt)...")
+            rep_trinity = call_gemini(P_TRINITY, clean_text)
+            status_box.write("✅ Rapports Experts générés.")
+            time.sleep(5) # Pause de sécurité
             
-            status_box.write("🛡️ Ethan (Risques)...")
-            rep_ethan = call_gemini(P_ETHAN, clean_text)
-            time.sleep(2)
-            
-            status_box.write("👾 Krypt (Data)...")
-            rep_krypt = call_gemini(P_KRYPT, clean_text)
-            time.sleep(2)
-            
-            # PHOEBE
+            # 3. PHOEBE (Appel 3)
             status_box.write("💎 Phoebe : Compilation...")
-            input_phoebe = f"LIORAH:\n{rep_liorah}\nETHAN:\n{rep_ethan}\nKRYPT:\n{rep_krypt}"
-            rep_phoebe = call_gemini(P_PHOEBE, input_phoebe)
-            time.sleep(1)
+            rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
+            time.sleep(2)
             
-            # AVENOR
+            # 4. AVENOR (Appel 4)
             status_box.write("👑 Avenor : Verdict...")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             
             status_box.update(label="✅ Audit Terminé", state="complete", expanded=False)
             
-            st.session_state.full_context = f"CONTEXTE:\n{clean_text}\nANALYSES:\n{input_phoebe}\nVERDICT:\n{rep_avenor}"
+            st.session_state.full_context = f"CONTEXTE:\n{clean_text}\nANALYSES COMPLÈTES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
             
             st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor})
