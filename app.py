@@ -58,6 +58,11 @@ st.markdown("""
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
+    
+    /* Progress Bar Color Hack */
+    .stProgress > div > div > div > div {
+        background-color: #E85D04;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +99,7 @@ def render_council():
 # --- SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Intro simple, le conseil est affiché en dur en dessous
+    # Intro simple
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
@@ -177,7 +182,7 @@ FORMAT STRICT :
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur le dossier. Sois pro, direct, expert BTP."
 
 # --- ZONE CHAT & AFFICHAGE CONSEIL ---
-# On affiche les avatars en permanence sous le titre pour qu'ils ne disparaissent pas
+# Les avatars sont toujours visibles
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -206,31 +211,44 @@ if not st.session_state.analysis_complete:
         st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
-        status_box = st.status(f"🚀 Initialisation du Protocole OEE...", expanded=True)
+        # BARRE DE PROGRESSION + STATUTS
+        progress_bar = st.progress(0, text="Initialisation du protocole OEE...")
+        status_box = st.empty() # Placeholder pour le texte de statut
+        
         try:
-            status_box.write("📄 Lecture du PDF (Extraction Optimisée)...")
+            # ETAPE 1
+            progress_bar.progress(10, text="Lecture du fichier PDF...")
             reader = PdfReader(uploaded_file)
-            
-            # --- OPTIMISATION : ON NE LIT QUE LES 50 PREMIÈRES PAGES POUR LE MVP ---
-            # Cela évite le crash sur les gros CCTP tout en gardant l'essentiel
-            max_pages = min(50, len(reader.pages)) 
+            max_pages = min(50, len(reader.pages)) # Limite technique invisible pour le client
             raw_text = ""
             for i in range(max_pages):
                 raw_text += reader.pages[i].extract_text() + "\n"
             
-            status_box.write(f"👁️ Kérès : Analyse des {max_pages} pages clés...")
-            clean_text = call_gemini(P_KERES, raw_text[:25000]) # Limite charactères pour vitesse
+            # ETAPE 2
+            progress_bar.progress(30, text="👁️ Kérès : Analyse des pages clés...")
+            status_box.markdown("**Analyse Kérès en cours...**")
+            clean_text = call_gemini(P_KERES, raw_text[:25000])
             
-            status_box.write("⚡ Trinité : Scan Juridique, Risques & Data...")
+            # ETAPE 3
+            progress_bar.progress(60, text="⚡ Trinité : Scan Juridique, Risques & Data...")
+            status_box.markdown("**Analyse Trinité (Experts) en cours...**")
             rep_trinity = call_gemini(P_TRINITY, clean_text)
             
-            status_box.write("💎 Phoebe : Compilation Stratégique...")
+            # ETAPE 4
+            progress_bar.progress(80, text="💎 Phoebe : Compilation Stratégique...")
+            status_box.markdown("**Synthèse Phoebe en cours...**")
             rep_phoebe = call_gemini(P_PHOEBE, rep_trinity)
             
-            status_box.write("👑 Avenor : Verdict...")
+            # ETAPE 5
+            progress_bar.progress(95, text="👑 Avenor : Rédaction du Verdict...")
+            status_box.markdown("**Délibération Avenor en cours...**")
             rep_avenor = call_gemini(P_AVENOR, rep_phoebe)
             
-            status_box.update(label="✅ Audit Terminé", state="complete", expanded=False)
+            # FIN
+            progress_bar.progress(100, text="✅ Audit Terminé")
+            time.sleep(1)
+            progress_bar.empty()
+            status_box.empty()
             
             st.session_state.full_context = f"CTX (Extrait):\n{clean_text}\nANALYSES:\n{rep_trinity}\nVERDICT:\n{rep_avenor}"
             st.session_state.analysis_complete = True
@@ -239,6 +257,7 @@ if not st.session_state.analysis_complete:
             st.rerun()
 
         except Exception as e:
+            progress_bar.empty()
             st.error(f"Erreur critique : {str(e)}")
 
 if st.session_state.analysis_complete:
