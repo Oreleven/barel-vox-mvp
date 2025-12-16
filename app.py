@@ -11,7 +11,7 @@ from datetime import datetime
 
 # --- CONFIGURATION MOTEUR ---
 # Version "Master Key" robuste et compatible avec ta clé Cloud
-MODEL_NAME = "gemini-pro"
+MODEL_NAME = "gemini-2.0-flash"
 
 # --- FONCTION UTILITAIRE (BASE64) ---
 def get_img_as_base64(file_path):
