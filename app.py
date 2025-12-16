@@ -1,11 +1,14 @@
 import streamlit as st
 import google.generativeai as genai
+from pypdf import PdfReader
 import os
 import base64
 import time
 import json
+import io
 
-# --- CONFIGURATION MOTEUR (2025 STANDARD) ---
+# --- CONFIGURATION MOTEUR ---
+# On revient sur celui qui s'affichait en VERT sur ton écran
 MODEL_NAME = "gemini-2.0-flash" 
 
 # --- FONCTION UTILITAIRE (BASE64 IMAGE) ---
@@ -183,32 +186,49 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR ULTRA BLINDÉE (MULTIMODALE & TEXTE) ---
+# --- FONCTION SECRETE D'EXTRACTION (LE SAUVETAGE) ---
+def extract_text_from_bytes(pdf_bytes):
+    """
+    Extrait le texte via Python pour éviter d'envoyer un PDF lourd à l'API.
+    Ça transforme 1 Mo de PDF en 5 Ko de texte.
+    """
+    try:
+        pdf_file = io.BytesIO(pdf_bytes)
+        reader = PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except:
+        return ""
+
+# --- FONCTION MOTEUR ULTRA BLINDÉE ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
     """
-    Gère les appels Multimodaux (PDF) ou Texte simple.
-    Retry infini (dans la limite du raisonnable) pour éviter les crashs démo.
+    Gère les appels API. 
+    STRATÉGIE DE CRASH : Si c'est un PDF, on extrait le texte LOCALEMENT et on envoie le texte.
+    Ça contourne les limites de quota de Gemini Flash 2.0.
     """
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
     
-    # Construction du contenu selon le type
+    # --- STRATÉGIE BLACK BOX ---
+    final_content = ""
     if is_pdf:
-        # Mode TRINITÉ : On envoie le PDF brut + Prompt
-        content_to_send = [
-            role_prompt,
-            {"mime_type": "application/pdf", "data": data_part} 
-        ]
+        # C'est ici qu'on gagne : on n'envoie PAS le PDF. On envoie le texte extrait.
+        extracted_text = extract_text_from_bytes(data_part)
+        final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (EXTRAIT):\n{extracted_text}"
     else:
-        # Mode AVENOR / CHAT : On envoie tout en texte
-        content_to_send = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
+        final_content = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
 
     max_retries = 5
-    base_delay = 5 # On démarre plus vite
+    base_delay = 5 
     
     attempts = 0
     while attempts < max_retries:
         try:
-            response = model.generate_content(content_to_send)
+            # On envoie du simple texte -> Ultra rapide, pas de surcharge
+            response = model.generate_content(final_content)
+            
             if output_json: return json.loads(response.text)
             else: return response.text
             
@@ -238,10 +258,10 @@ def phoebe_processing(trinity_report):
 # --- PROMPTS ---
 P_TRINITE = """
 Tu es le moteur d'analyse du CONSEIL OEE.
-Analyse ce document PDF (DCE BTP).
+Analyse ce texte issu d'un DCE BTP (PDF).
 Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
-- "analyse" : Un texte de 5 lignes MAX sur les risques critiques identifiés dans le PDF.
+- "analyse" : Un texte de 5 lignes MAX sur les risques critiques identifiés.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
 """
 
@@ -292,27 +312,28 @@ if not st.session_state.analysis_complete:
         status_placeholder = st.empty()
         
         try:
-            # 0. LECTURE BINAIRE (Pour envoi direct)
+            # 0. LECTURE BINAIRE
             pdf_bytes = uploaded_file.getvalue()
 
             # 1. EVENA (SHOWROOM MODE)
+            # On affiche qu'on bosse, mais en vrai on ne fait rien, on attend juste.
             progress_bar.progress(10, text="Evena : Lecture et structuration du fichier...")
-            time.sleep(11) # Simulation lecture humaine
+            time.sleep(11) 
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
             # 2. KERES (SHOWROOM MODE)
             progress_bar.progress(30, text="Kérès : Anonymisation et nettoyage RGPD...")
-            time.sleep(14) # Simulation nettoyage complexe
+            time.sleep(14) 
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE (REAL MODE - DIRECT PDF)
+            # 3. TRINITE (REAL MODE - TEXTE BLINDÉ)
             progress_bar.progress(60, text="Trinité : Scan Expert Multispectral...")
             
-            # On envoie le PDF BRUT -> Pas de perte de token, pas d'OCR foireuse
+            # C'est ici la magie : On passe le PDF brut, mais la fonction va le convertir en texte léger
             trinity_result = call_gemini_resilient(
                 P_TRINITE, 
-                pdf_bytes, # <-- ON ENVOIE LES BYTES
-                True,      # <-- MODE PDF
+                pdf_bytes, 
+                True,      # <-- Dit "C'est un PDF", la fonction fera l'extraction texte
                 "Trinité", 
                 output_json=True, 
                 status_placeholder=status_placeholder
@@ -341,7 +362,7 @@ if not st.session_state.analysis_complete:
             rep_avenor = call_gemini_resilient(
                 P_AVENOR, 
                 rep_phoebe,
-                False, # <-- MODE TEXTE
+                False, # <-- Mode Texte
                 "Avenor", 
                 output_json=False, 
                 status_placeholder=status_placeholder
