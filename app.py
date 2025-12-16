@@ -9,10 +9,10 @@ import io
 import re
 
 # --- CONFIGURATION MOTEUR ---
-# On reste sur le modèle 2025 que tu veux
+# Version Stable Décembre 2025
 MODEL_NAME = "gemini-2.0-flash" 
 
-# --- FONCTION UTILITAIRE (BASE64 IMAGE) ---
+# --- FONCTION UTILITAIRE (BASE64) ---
 def get_img_as_base64(file_path):
     try:
         with open(file_path, "rb") as f:
@@ -21,7 +21,7 @@ def get_img_as_base64(file_path):
     except:
         return None 
 
-# --- CONFIGURATION DE LA PAGE ---
+# --- CONFIGURATION PAGE ---
 favicon_path = "assets/favicon.ico"
 page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
 
@@ -77,6 +77,17 @@ st.markdown("""
         border-radius: 0 5px 5px 0;
     }
     
+    /* ERROR LOG - ROUGE VIF */
+    .error-log {
+        color: #D32F2F;
+        font-weight: bold;
+        padding: 10px;
+        border-left: 3px solid #D32F2F;
+        background-color: rgba(211, 47, 47, 0.1);
+        margin-bottom: 5px;
+        border-radius: 0 5px 5px 0;
+    }
+
     /* Logs Waiting */
     .waiting-log {
         color: #FF9800;
@@ -118,7 +129,7 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- RENDER COUNCIL (HTML) ---
+# --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
@@ -187,12 +198,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION SECRETE D'EXTRACTION (LE FIX) ---
+# --- EXTRACTION TEXTE (PYTHON) ---
 def extract_text_from_bytes(pdf_bytes):
-    """
-    Transforme le PDF en texte brut via Python.
-    Réduit le poids de la requête de 99% pour éviter les erreurs de quota.
-    """
     try:
         pdf_file = io.BytesIO(pdf_bytes)
         reader = PdfReader(pdf_file)
@@ -200,42 +207,30 @@ def extract_text_from_bytes(pdf_bytes):
         for page in reader.pages:
             txt_page = page.extract_text()
             if txt_page:
-                # Nettoyage basique pour compacter
-                txt_page = re.sub(r'\n+', ' ', txt_page) 
                 text += txt_page + "\n"
         return text
-    except:
-        return "Erreur lecture PDF"
+    except Exception as e:
+        return f"Erreur lecture PDF : {str(e)}"
 
-# --- FONCTION MOTEUR ULTRA BLINDÉE ---
+# --- FONCTION MOTEUR DEBUG MODE ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
-    """
-    Gère les appels API. 
-    STRATÉGIE DE SAUVETAGE : Si c'est un PDF, on extrait le texte LOCALEMENT d'abord.
-    On envoie ensuite uniquement ce texte (léger) à l'API.
-    """
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
     
-    # --- PRÉPARATION DU CONTENU ---
     final_content = ""
     if is_pdf:
-        # ICI ON CONVERTIT LE PDF EN TEXTE AVANT D'APPELER L'API
-        # Cela contourne la saturation du canal binaire
+        # Extraction texte
         extracted_text = extract_text_from_bytes(data_part)
         final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (TEXTE EXTRAIT):\n{extracted_text}"
     else:
-        # Cas simple (Chat ou Synthèse)
         final_content = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
 
-    max_retries = 5
-    base_delay = 5 
+    max_retries = 3 # On réduit pour voir l'erreur plus vite
+    base_delay = 2 
     
     attempts = 0
     while attempts < max_retries:
         try:
-            # On envoie une simple chaîne de caractères (très stable)
             response = model.generate_content(final_content)
-            
             if output_json: return json.loads(response.text)
             else: return response.text
             
@@ -243,22 +238,25 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
             attempts += 1
             error_str = str(e)
             
-            # Gestion 429 / 503 / Quota
+            # MODE VÉRITÉ : On affiche l'erreur en direct
+            if status_placeholder:
+                status_placeholder.markdown(
+                    f'<div class="error-log">⚠️ Erreur {agent_name} (Essai {attempts}) : {error_str}</div>', 
+                    unsafe_allow_html=True
+                )
+            
+            # Si c'est vraiment du quota (429), on attend un peu
             if "429" in error_str or "quota" in error_str.lower() or "503" in error_str:
-                wait_time = int(base_delay * (1.5 ** attempts))
-                if status_placeholder:
-                    status_placeholder.markdown(
-                        f'<div class="waiting-log">⏳ Analyse dense. {agent_name} temporise... (Essai {attempts}/{max_retries})</div>', 
-                        unsafe_allow_html=True
-                    )
-                time.sleep(wait_time)
-                continue 
+                time.sleep(5)
+                continue
             else:
-                return f"⚠️ Erreur critique Agent {agent_name} : {error_str}"
+                # Si c'est autre chose (400, permission, API key invalide...), on arrête TOUT DE SUITE
+                # et on renvoie l'erreur brute pour diagnostic
+                return f"⚠️ ERREUR BLOQUANTE : {error_str}"
     
-    return f"⚠️ Échec : {agent_name} injoignable après {max_retries} tentatives."
+    return f"⚠️ ABANDON : {agent_name} bloqué."
 
-# --- FONCTION PHOEBE (LOCALE) ---
+# --- PHOEBE ---
 def phoebe_processing(trinity_report):
     return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
 
@@ -268,7 +266,7 @@ Tu es le moteur d'analyse du CONSEIL OEE.
 Analyse ce texte issu d'un DCE BTP.
 Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
-- "analyse" : Un texte de 5 lignes MAX sur les risques critiques identifiés.
+- "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
 """
 
@@ -319,34 +317,35 @@ if not st.session_state.analysis_complete:
         status_placeholder = st.empty()
         
         try:
-            # 0. LECTURE BINAIRE
             pdf_bytes = uploaded_file.getvalue()
 
-            # 1. EVENA (SHOWROOM MODE)
-            progress_bar.progress(10, text="Evena : Lecture et structuration du fichier...")
-            time.sleep(11) # Simulation lecture humaine
+            # 1. EVENA
+            progress_bar.progress(10, text="Evena : Lecture...")
+            time.sleep(11)
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # 2. KERES (SHOWROOM MODE)
-            progress_bar.progress(30, text="Kérès : Anonymisation et nettoyage RGPD...")
-            time.sleep(14) # Simulation nettoyage
+            # 2. KERES
+            progress_bar.progress(30, text="Kérès : Sécurisation...")
+            time.sleep(14)
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE (TEXTE LEGER)
-            progress_bar.progress(60, text="Trinité : Scan Expert Multispectral...")
+            # 3. TRINITE
+            progress_bar.progress(60, text="Trinité : Scan Expert...")
             
-            # Appel avec is_pdf=True -> Déclenche l'extraction texte interne avant envoi
             trinity_result = call_gemini_resilient(
                 P_TRINITE, 
                 pdf_bytes, 
-                True, # <-- C'est un PDF, mais on va envoyer son TEXTE
+                True, 
                 "Trinité", 
                 output_json=True, 
                 status_placeholder=status_placeholder
             )
             status_placeholder.empty()
             
-            if isinstance(trinity_result, str) and "⚠️" in trinity_result: raise Exception(trinity_result)
+            # Si erreur renvoyée comme texte
+            if isinstance(trinity_result, str) and "⚠️" in trinity_result:
+                st.error(trinity_result) # Affiche l'erreur bloquante
+                st.stop()
 
             log_container.markdown(f'''
             <div class="success-log">
@@ -359,23 +358,25 @@ if not st.session_state.analysis_complete:
             
             # 4. PHOEBE
             time.sleep(1)
-            progress_bar.progress(80, text="Phoebe : Compilation des verdicts...")
+            progress_bar.progress(80, text="Phoebe : Compilation...")
             rep_phoebe = phoebe_processing(json.dumps(trinity_result))
             log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
             
-            # 5. AVENOR (TEXTE SIMPLE)
-            progress_bar.progress(90, text="Avenor : Délibération finale...")
+            # 5. AVENOR
+            progress_bar.progress(90, text="Avenor : Verdict...")
             rep_avenor = call_gemini_resilient(
                 P_AVENOR, 
                 rep_phoebe,
-                False, # <-- Mode Texte normal
+                False, 
                 "Avenor", 
                 output_json=False, 
                 status_placeholder=status_placeholder
             )
             status_placeholder.empty()
             
-            if "⚠️" in rep_avenor: raise Exception(rep_avenor)
+            if "⚠️" in rep_avenor:
+                st.error(rep_avenor)
+                st.stop()
 
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             progress_bar.progress(100, text="Audit Terminé")
@@ -390,7 +391,7 @@ if not st.session_state.analysis_complete:
 
         except Exception as e:
             progress_bar.empty()
-            st.error(f"Erreur technique : {str(e)}")
+            st.error(f"Erreur technique Python : {str(e)}")
 
 if st.session_state.analysis_complete:
     user_input = st.chat_input("Question pour Avenor...")
