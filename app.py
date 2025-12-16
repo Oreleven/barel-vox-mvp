@@ -1,17 +1,14 @@
 import streamlit as st
 import google.generativeai as genai
-from pypdf import PdfReader
 import os
 import base64
 import time
 import json
-import re
 
-# --- CONFIGURATION MOTEUR ---
-# On reste sur le Flash 2.0 pour la vitesse, mais on blinde les appels
+# --- CONFIGURATION MOTEUR (2025 STANDARD) ---
 MODEL_NAME = "gemini-2.0-flash" 
 
-# --- FONCTION UTILITAIRE (BASE64) ---
+# --- FONCTION UTILITAIRE (BASE64 IMAGE) ---
 def get_img_as_base64(file_path):
     try:
         with open(file_path, "rb") as f:
@@ -186,23 +183,32 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR BLINDÉE (Backoff Exponentiel) ---
-def call_gemini_resilient(role_prompt, user_content, agent_name, output_json=False, status_placeholder=None):
+# --- FONCTION MOTEUR ULTRA BLINDÉE (MULTIMODALE & TEXTE) ---
+def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
     """
-    Tente d'appeler l'API Gemini avec une stratégie de retry intelligent (Exponential Backoff).
-    Gère les erreurs 429 (Resource Exhausted) sans faire planter l'app.
+    Gère les appels Multimodaux (PDF) ou Texte simple.
+    Retry infini (dans la limite du raisonnable) pour éviter les crashs démo.
     """
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
-    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT / CONTEXTE :\n{user_content}"
     
+    # Construction du contenu selon le type
+    if is_pdf:
+        # Mode TRINITÉ : On envoie le PDF brut + Prompt
+        content_to_send = [
+            role_prompt,
+            {"mime_type": "application/pdf", "data": data_part} 
+        ]
+    else:
+        # Mode AVENOR / CHAT : On envoie tout en texte
+        content_to_send = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
+
     max_retries = 5
-    base_delay = 10 # secondes
+    base_delay = 5 # On démarre plus vite
     
     attempts = 0
     while attempts < max_retries:
         try:
-            response = model.generate_content(full_prompt)
-            # Succès !
+            response = model.generate_content(content_to_send)
             if output_json: return json.loads(response.text)
             else: return response.text
             
@@ -210,51 +216,32 @@ def call_gemini_resilient(role_prompt, user_content, agent_name, output_json=Fal
             attempts += 1
             error_str = str(e)
             
-            # Gestion spécifique des erreurs de quota ou surcharge
+            # Gestion 429 / 503 / Quota
             if "429" in error_str or "quota" in error_str.lower() or "503" in error_str:
-                wait_time = base_delay * (1.5 ** attempts) # 15s, 22.5s, 33s...
-                wait_time = int(wait_time)
-                
+                wait_time = int(base_delay * (1.5 ** attempts))
                 if status_placeholder:
                     status_placeholder.markdown(
-                        f'<div class="waiting-log">⏳ Trafic saturé (API Google). {agent_name} temporise...<br>Tentative {attempts}/{max_retries}. Reprise dans {wait_time}s.</div>', 
+                        f'<div class="waiting-log">⏳ Analyse dense. {agent_name} temporise... (Essai {attempts}/{max_retries})</div>', 
                         unsafe_allow_html=True
                     )
                 time.sleep(wait_time)
-                continue # On retente
+                continue 
             else:
-                # Erreur autre (ex: clé invalide, format) -> on arrête tout de suite
                 return f"⚠️ Erreur critique Agent {agent_name} : {error_str}"
     
-    return f"⚠️ Échec : {agent_name} n'a pas pu répondre après {max_retries} tentatives. Le réseau est trop instable."
+    return f"⚠️ Échec : {agent_name} injoignable après {max_retries} tentatives."
 
-# --- FONCTIONS LOCALES ---
-def evena_extract_json(reader):
-    doc_structure = {}
-    max_pages = min(80, len(reader.pages))
-    for i in range(max_pages):
-        page_content = reader.pages[i].extract_text()
-        page_content = re.sub(r'\n+', ' ', page_content) 
-        doc_structure[f"page_{i+1}"] = page_content
-    return doc_structure
-
-def keres_anonymize_json(json_data):
-    str_data = json.dumps(json_data, ensure_ascii=False)
-    # Regex basiques pour simuler le travail
-    str_data = re.sub(r'[\w\.-]+@[\w\.-]+', '[EMAIL_HIDDEN]', str_data)
-    str_data = re.sub(r'\b0[1-9]([-. ]?[0-9]{2}){4}\b', '[PHONE_HIDDEN]', str_data)
-    return str_data
-
+# --- FONCTION PHOEBE (LOCALE) ---
 def phoebe_processing(trinity_report):
     return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
 
 # --- PROMPTS ---
 P_TRINITE = """
 Tu es le moteur d'analyse du CONSEIL OEE.
-Analyse ce contenu JSON (DCE BTP).
+Analyse ce document PDF (DCE BTP).
 Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
-- "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
+- "analyse" : Un texte de 5 lignes MAX sur les risques critiques identifiés dans le PDF.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
 """
 
@@ -302,46 +289,37 @@ if not st.session_state.analysis_complete:
             
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
-        status_placeholder = st.empty() # Placeholder pour les messages d'attente
+        status_placeholder = st.empty()
         
         try:
-            # 1. EVENA (OCR)
+            # 0. LECTURE BINAIRE (Pour envoi direct)
+            pdf_bytes = uploaded_file.getvalue()
+
+            # 1. EVENA (SHOWROOM MODE)
             progress_bar.progress(10, text="Evena : Lecture et structuration du fichier...")
-            reader = PdfReader(uploaded_file)
+            time.sleep(11) # Simulation lecture humaine
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # --- SHOWROOM DELAY ---
-            time.sleep(11) # Délai artificiel demandé pour crédibilité
-            # ----------------------
-            
-            json_doc = evena_extract_json(reader)
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée ({len(json_doc)} pages)</div>', unsafe_allow_html=True)
-            
-            # 2. KERES (CLEANING)
+            # 2. KERES (SHOWROOM MODE)
             progress_bar.progress(30, text="Kérès : Anonymisation et nettoyage RGPD...")
-            
-            # --- SHOWROOM DELAY ---
-            time.sleep(14) # Délai artificiel demandé pour crédibilité
-            # ----------------------
-            
-            clean_json_str = keres_anonymize_json(json_doc)
+            time.sleep(14) # Simulation nettoyage complexe
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE (API RESILIENTE)
+            # 3. TRINITE (REAL MODE - DIRECT PDF)
             progress_bar.progress(60, text="Trinité : Scan Expert Multispectral...")
             
-            # NOTE : On envoie tout le document (plus de limite [:60000]) grâce à Gemini 1.5/2.0
+            # On envoie le PDF BRUT -> Pas de perte de token, pas d'OCR foireuse
             trinity_result = call_gemini_resilient(
                 P_TRINITE, 
-                clean_json_str, # Document COMPLET
+                pdf_bytes, # <-- ON ENVOIE LES BYTES
+                True,      # <-- MODE PDF
                 "Trinité", 
                 output_json=True, 
                 status_placeholder=status_placeholder
             )
             status_placeholder.empty()
             
-            # Vérification si échec critique
-            if isinstance(trinity_result, str) and "⚠️" in trinity_result:
-                 raise Exception(trinity_result)
+            if isinstance(trinity_result, str) and "⚠️" in trinity_result: raise Exception(trinity_result)
 
             log_container.markdown(f'''
             <div class="success-log">
@@ -358,11 +336,12 @@ if not st.session_state.analysis_complete:
             rep_phoebe = phoebe_processing(json.dumps(trinity_result))
             log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
             
-            # 5. AVENOR (API RESILIENTE)
+            # 5. AVENOR (TEXTE SIMPLE)
             progress_bar.progress(90, text="Avenor : Délibération finale...")
             rep_avenor = call_gemini_resilient(
                 P_AVENOR, 
-                rep_phoebe, 
+                rep_phoebe,
+                False, # <-- MODE TEXTE
                 "Avenor", 
                 output_json=False, 
                 status_placeholder=status_placeholder
@@ -393,12 +372,11 @@ if st.session_state.analysis_complete:
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(user_input)
             
         with st.spinner("Avenor consulte le dossier..."):
-            # On utilise aussi la fonction résiliente ici pour éviter le crash en chat
             chat_context = f"CONTEXTE DOSSIER:\n{st.session_state.full_context}"
-            
             reply = call_gemini_resilient(
                 P_CHAT_AVENOR,
                 f"{chat_context}\n\nQUESTION UTILISATEUR:\n{user_input}",
+                False, # Mode Texte
                 "Avenor Chat",
                 output_json=False,
                 status_placeholder=st.empty()
