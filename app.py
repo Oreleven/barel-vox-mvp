@@ -31,7 +31,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- GESTION ÉTAT ---
+# --- SÉCURITÉ INITIALISATION (Le Fix Anti-Crash) ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    st.session_state.messages.append({
+        "role": "assistant",
+        "name": "Avenor",
+        "avatar": get_asset_path("avenor"),
+        "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
+    })
+
 if "verdict_color" not in st.session_state: st.session_state.verdict_color = "neutral"
 if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
 if "full_context" not in st.session_state: st.session_state.full_context = ""
@@ -291,18 +300,16 @@ Analyse le texte du CCTP ci-joint.
 **TES INSTRUCTIONS STRICTES (ANTI-HALLUCINATION & RÈGLES DE L'ART) :**
 
 1.  **UPEC / CARACTÉRISTIQUES TECHNIQUES :**
-    - Si le CCTP décrit le produit avec des normes (NF/ISO), un classement UPEC (ex: U3P3, U4P3) ou des détails techniques (ex: couche d'usure), c'est **CONFORME** et **VERT**.
-    - C'est une bonne chose que ce soit détaillé. NE SIGNALE PAS cela comme une erreur.
-    - Signale un risque "Orange" UNIQUEMENT si la description est vide (ex: "sol souple" sans aucune précision).
+    - Si le CCTP décrit précisément le produit (Ex: Classement UPEC, Épaisseur couche d'usure, Poinçonnement, Normes NF/ISO), c'est **CONFORME**.
+    - NE SIGNALE PAS de risque juste parce qu'il y a beaucoup de détails. Au contraire, c'est ce qu'on veut.
+    - Signale un risque UNIQUEMENT si la description est vague (ex: "Sols souples de qualité" sans norme citée).
 
-2.  **MARQUES & ÉQUIVALENCE (Art. R2111-7 Code Commande Publique) :**
-    - La mention "ou techniquement équivalent" est **OBLIGATOIRE**. Sa présence est un point **VERT**.
-    - Ne critique jamais la présence de cette mention.
-    - Critique seulement si le CCTP ne donne pas les critères techniques (UPEC, Acoustique, etc.) qui permettront de juger cette équivalence.
+2.  **ÉQUIVALENCE (LOI FRANÇAISE) :**
+    - La mention "ou techniquement équivalent" est **OBLIGATOIRE**. Ne la critique JAMAIS comme étant floue.
+    - Le risque existe SEULEMENT si le CCTP ne donne AUCUNE caractéristique technique permettant de juger cette équivalence.
 
 3.  **SUPPORTS (NF DTU) :**
-    - La règle est que l'entreprise réceptionne ses supports.
-    - Ne signale un risque que si le lot précédent n'est pas identifié ou si on demande à l'entreprise de "tout refaire" sans état des lieux.
+    - Selon le NF DTU, l'entreprise doit réceptionner ses supports. Ne signale un risque que si le lot précédent n'est pas identifié ou si on demande à l'entreprise de "tout refaire" sans état des lieux.
 
 4.  **DTU & NORMES :**
     - Ne juge pas un DTU obsolète si tu n'as pas la date du Permis de Construire.
@@ -328,7 +335,7 @@ Voici les rapports des experts.
 [FLAG : X]
 
 ### 🛡️ VERDICT DU CONSEIL
-**Décision :** [Phrase courte et pro.]
+**Décision :** [Phrase courte]
 
 **⚠️ POINTS DE VIGILANCE :**
 1. [Point 1]
@@ -344,7 +351,10 @@ P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, expert BTP, focus a
 # --- CHAT & AVATARS ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
-for msg in st.session_state.messages:
+# SÉCURITÉ BOUCLE DE CHAT : On s'assure que messages existe
+messages_list = st.session_state.get("messages", [])
+
+for msg in messages_list:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
             # Détection couleur via REGEX sur le tag [FLAG : X]
@@ -396,12 +406,12 @@ if not st.session_state.analysis_complete:
 
             # 1. EVENA
             progress_bar.progress(10, text="Evena : Lecture...")
-            time.sleep(2) # Showroom
+            time.sleep(2) 
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
             # 2. KERES
             progress_bar.progress(30, text="Kérès : Sécurisation...")
-            time.sleep(2) # Showroom
+            time.sleep(2) 
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
             # 3. TRINITE
