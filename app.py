@@ -33,6 +33,9 @@ st.set_page_config(
 
 # --- GESTION ÉTAT ---
 if "verdict_color" not in st.session_state: st.session_state.verdict_color = "neutral"
+if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
+if "full_context" not in st.session_state: st.session_state.full_context = ""
+if "time_taken" not in st.session_state: st.session_state.time_taken = None
 
 # --- EFFET CAMÉLÉON ---
 glow_color = "transparent"
@@ -76,10 +79,7 @@ st.markdown(f"""
     .council-img {{ width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; object-fit: cover; }}
     .council-img:hover {{ transform: scale(1.1); border-color: #E85D04; }}
     
-    /* Progress Bar */
-    .stProgress > div > div > div > div {{ background-color: #E85D04; }}
-    
-    /* Logs Success */
+    /* Logs */
     .success-log {{
         color: #4CAF50;
         font-weight: bold;
@@ -89,8 +89,6 @@ st.markdown(f"""
         margin-bottom: 5px;
         border-radius: 0 5px 5px 0;
     }}
-    
-    /* Error Log */
     .error-log {{
         color: #D32F2F;
         font-weight: bold;
@@ -164,19 +162,6 @@ def render_council():
     html += '</div></div>'
     return html
 
-# --- SESSION ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    st.session_state.messages.append({
-        "role": "assistant",
-        "name": "Avenor",
-        "avatar": AVATARS["avenor"],
-        "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
-    })
-
-if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
-if "full_context" not in st.session_state: st.session_state.full_context = ""
-
 # --- SIDEBAR ---
 with st.sidebar:
     if AVATARS["barel"] != "👤": st.image(AVATARS["barel"], use_column_width=True)
@@ -185,7 +170,6 @@ with st.sidebar:
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
-        # On affiche le VRAI modèle
         st.success(f"Moteur Connecté (Gemini-3.0-Pro) 🟢")
     else: st.warning("Moteur en attente...")
     st.markdown("---")
@@ -207,6 +191,7 @@ with st.sidebar:
         st.session_state.analysis_complete = False
         st.session_state.full_context = ""
         st.session_state.verdict_color = "neutral"
+        st.session_state.time_taken = None
         st.rerun()
 
 # --- HEADER ---
@@ -235,6 +220,20 @@ def extract_text_from_bytes(pdf_bytes):
     except Exception as e:
         return f"Erreur lecture PDF : {str(e)}"
 
+# --- NETTOYAGE JSON CHIRURGICAL ---
+def clean_gemini_json(text):
+    """Extrait le JSON même si Gemini bavarde avant/après"""
+    try:
+        # On cherche le premier { et le dernier }
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start != -1 and end != -1:
+            json_str = text[start:end]
+            return json.loads(json_str)
+        return json.loads(text) # Tentative directe
+    except:
+        return None
+
 # --- FONCTION MOTEUR ROBUSTE ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
@@ -251,8 +250,14 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
     while attempts < max_retries:
         try:
             response = model.generate_content(final_content)
-            if output_json: return json.loads(response.text)
-            else: return response.text
+            text_resp = response.text
+            
+            if output_json:
+                data = clean_gemini_json(text_resp)
+                if data: return data
+                else: raise ValueError("JSON invalide")
+            else:
+                return text_resp
             
         except Exception as e:
             attempts += 1
@@ -263,6 +268,12 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
                 time.sleep(5)
                 continue
             else:
+                if output_json: # Fallback structuré
+                     return {
+                        "liorah": {"analyse": "Erreur technique analyse", "flag": "🟠"},
+                        "ethan": {"analyse": "Erreur technique analyse", "flag": "🟠"},
+                        "krypt": {"analyse": "Erreur technique analyse", "flag": "🟠"}
+                    }
                 return f"⚠️ ERREUR BLOQUANTE : {error_str}"
     
     return f"⚠️ ABANDON : {agent_name} bloqué."
@@ -272,43 +283,60 @@ def phoebe_processing(trinity_report):
     if isinstance(trinity_report, str): return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
     else: return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {json.dumps(trinity_report)}"
 
-# --- PROMPTS CORRIGÉS "LOI MOP / MARCHÉS PUBLICS" ---
+# --- PROMPTS LÉGAUX & RIGOUREUX ---
 P_TRINITE = """
-Tu es un Expert Auditeur de DCE BTP (Loi MOP / Marchés Privés).
-Ton objectif : Détecter les **vraies** failles permettant des TS (Travaux Supplémentaires).
+Tu es un Expert Auditeur de DCE BTP (Code de la Commande Publique Français).
+Analyse le texte du CCTP ci-joint.
 
-Analyse le texte du DCE ci-joint. Sois technique et juridiquement juste (Droit Français).
+**TES INSTRUCTIONS STRICTES (ANTI-HALLUCINATION & RÈGLES DE L'ART) :**
 
-**RÈGLES D'ANALYSE STRICTES (Anti-Hallucination) :**
-1. **MARQUES & ÉQUIVALENCES :** La mention "ou équivalent technique" est OBLIGATOIRE (Code de la Commande Publique). Ne la critique JAMAIS. Le risque de TS existe UNIQUEMENT si le CCTP ne donne AUCUNE caractéristique technique (acoustique, thermique, classement UPEC...) permettant de juger cette équivalence.
-2. **SUPPORTS :** L'entreprise doit réceptionner les supports avant travaux. Ne signale un risque que si le lot précédent n'est pas clairement identifié ou si la remise en état est à la charge du lot "sans état des lieux".
-3. **DTU :** Ne dis JAMAIS qu'un DTU est obsolète si tu n'as pas la date du Permis de Construire. Contente-toi de vérifier si les DTU cités sont cohérents avec l'ouvrage.
+1.  **UPEC / CARACTÉRISTIQUES TECHNIQUES :**
+    - Si le CCTP décrit le produit avec des normes (NF/ISO), un classement UPEC (ex: U3P3, U4P3) ou des détails techniques (ex: couche d'usure), c'est **CONFORME** et **VERT**.
+    - C'est une bonne chose que ce soit détaillé. NE SIGNALE PAS cela comme une erreur.
+    - Signale un risque "Orange" UNIQUEMENT si la description est vide (ex: "sol souple" sans aucune précision).
+
+2.  **MARQUES & ÉQUIVALENCE (Art. R2111-7 Code Commande Publique) :**
+    - La mention "ou techniquement équivalent" est **OBLIGATOIRE**. Sa présence est un point **VERT**.
+    - Ne critique jamais la présence de cette mention.
+    - Critique seulement si le CCTP ne donne pas les critères techniques (UPEC, Acoustique, etc.) qui permettront de juger cette équivalence.
+
+3.  **SUPPORTS (NF DTU) :**
+    - La règle est que l'entreprise réceptionne ses supports.
+    - Ne signale un risque que si le lot précédent n'est pas identifié ou si on demande à l'entreprise de "tout refaire" sans état des lieux.
+
+4.  **DTU & NORMES :**
+    - Ne juge pas un DTU obsolète si tu n'as pas la date du Permis de Construire.
 
 Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé :
-- "analyse" : Max 5 lignes. Cite l'erreur et l'article/page.
-- "flag" : "🔴" (Bloquant), "🟠" (Ambigü), "🟢" (RAS).
+- "analyse" : Max 5 lignes. Cite l'erreur précise (Article/Page) SI ET SEULEMENT SI c'est une vraie non-conformité. Sinon "RAS, Conforme aux attentes".
+- "flag" : "🔴" (Non-Conformité majeure / Illégal), "🟠" (Flou / Manque précision), "🟢" (Conforme / Détaillé).
 """
 
 P_AVENOR = """Tu es AVENOR, Directeur de Projet BTP.
-Tu parles à la Maîtrise d'Ouvrage (MOA). Ton but : Éviter les TS abusifs.
+Tu parles à la Maîtrise d'Ouvrage (MOA).
 
-Voici les rapports des experts. Décide si le DCE est prêt.
+Voici les rapports des experts.
+
+**RÈGLE DE DÉCISION DU FLAG FINAL :**
+- Ton message DOIT commencer par l'un de ces tags exacts : `[FLAG : 🔴]`, `[FLAG : 🟠]`, ou `[FLAG : 🟢]`.
+- Si Trinité a trouvé des vraies failles (Rouge/Orange) -> Reporte le flag le plus sévère.
+- Si Trinité dit que c'est conforme (Vert) -> Mets `[FLAG : 🟢]`.
 
 **FORMAT DE SORTIE (Texte Markdown) :**
 
-[FLAG : X] (Mets juste l'émoji ici : 🔴, 🟠 ou 🟢)
+[FLAG : X]
 
 ### 🛡️ VERDICT DU CONSEIL
 **Décision :** [Phrase courte et pro.]
 
-**⚠️ TOP 3 DES POINTS DE VIGILANCE (RISQUE TS) :**
+**⚠️ POINTS DE VIGILANCE :**
 1. [Point 1]
 2. [Point 2]
 3. [Point 3]
 
 **💡 CONSEIL STRATÉGIQUE :**
-[Une action corrective précise].
+[Action corrective].
 """
 
 P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, expert BTP, focus anti-TS."
@@ -319,12 +347,25 @@ st.markdown(render_council(), unsafe_allow_html=True)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
-            # Détection couleur pour CSS
+            # Détection couleur via REGEX sur le tag [FLAG : X]
             css_class = "decision-box-green"
-            if "🔴" in msg["content"]: css_class = "decision-box-red"
-            elif "🟠" in msg["content"]: css_class = "decision-box-orange"
+            if "[FLAG : 🔴]" in msg["content"]: css_class = "decision-box-red"
+            elif "[FLAG : 🟠]" in msg["content"]: css_class = "decision-box-orange"
             
-            st.markdown(f'<div class="{css_class}">{msg["content"]}</div>', unsafe_allow_html=True)
+            # Nettoyage du tag pour l'affichage
+            display_content = msg["content"].replace("[FLAG : 🔴]", "").replace("[FLAG : 🟠]", "").replace("[FLAG : 🟢]", "")
+            
+            st.markdown(f'<div class="{css_class}">{display_content}</div>', unsafe_allow_html=True)
+            
+            # --- TIMELINE & TAMPON (Intégrés ici) ---
+            if st.session_state.time_taken:
+                st.markdown(f"""
+                <div class="stamp-block">
+                    <div class="timeline">⏱️ Analyse : {st.session_state.time_taken}</div>
+                    <div class="stamp">✅ VÉRIFIÉ PAR COUNCIL OEE</div>
+                </div>
+                """, unsafe_allow_html=True)
+
         else:
             if msg["role"] == "assistant":
                 st.markdown(f"**{msg['name']}**")
@@ -355,12 +396,12 @@ if not st.session_state.analysis_complete:
 
             # 1. EVENA
             progress_bar.progress(10, text="Evena : Lecture...")
-            time.sleep(11)
+            time.sleep(2) # Showroom
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
             # 2. KERES
             progress_bar.progress(30, text="Kérès : Sécurisation...")
-            time.sleep(14)
+            time.sleep(2) # Showroom
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
             # 3. TRINITE
@@ -378,9 +419,10 @@ if not st.session_state.analysis_complete:
             if isinstance(trinity_result, str) and "⚠️" in trinity_result:
                 st.error(trinity_result); st.stop()
 
-            liorah_flag = trinity_result.get('liorah', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
-            ethan_flag = trinity_result.get('ethan', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
-            krypt_flag = trinity_result.get('krypt', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
+            # Extraction sécurisée des flags (Valeur par défaut si manquant)
+            liorah_flag = trinity_result.get('liorah', {}).get('flag', '🟢')
+            ethan_flag = trinity_result.get('ethan', {}).get('flag', '🟢')
+            krypt_flag = trinity_result.get('krypt', {}).get('flag', '🟢')
 
             log_container.markdown(f'''
             <div class="success-log">
@@ -411,24 +453,21 @@ if not st.session_state.analysis_complete:
             
             if "⚠️" in rep_avenor_raw: st.error(rep_avenor_raw); st.stop()
 
-            # --- PREPARATION DU MESSAGE FINAL (INCLUANT TIMELINE & TAMPON) ---
+            # --- PARSING DU VERDICT POUR LE CAMÉLÉON ---
+            # On cherche le tag strict [FLAG : X]
+            match = re.search(r"\[FLAG\s*:\s*(.*?)\]", rep_avenor_raw)
+            if match:
+                flag_found = match.group(1)
+                if "🔴" in flag_found: st.session_state.verdict_color = "red"
+                elif "🟠" in flag_found: st.session_state.verdict_color = "orange"
+                elif "🟢" in flag_found: st.session_state.verdict_color = "green"
+            else:
+                st.session_state.verdict_color = "neutral"
+
+            # Calcul du temps
             end_time = time.time()
             duration = end_time - start_time
-            time_str = f"{int(duration // 60)} min {int(duration % 60)} s"
-
-            # On détecte la couleur pour le caméléon
-            if "🔴" in rep_avenor_raw: st.session_state.verdict_color = "red"
-            elif "🟠" in rep_avenor_raw: st.session_state.verdict_color = "orange"
-            elif "🟢" in rep_avenor_raw: st.session_state.verdict_color = "green"
-            
-            # On fusionne le texte brut avec le HTML du tampon et de la timeline
-            final_avenor_content = f"""
-            {rep_avenor_raw}
-            <div class="stamp-block">
-                <div class="timeline">⏱️ Analyse : {time_str}</div>
-                <div class="stamp">✅ VÉRIFIÉ PAR COUNCIL OEE</div>
-            </div>
-            """
+            st.session_state.time_taken = f"{int(duration // 60)} min {int(duration % 60)} s"
 
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             progress_bar.progress(100, text="Audit Terminé")
@@ -438,7 +477,7 @@ if not st.session_state.analysis_complete:
             st.session_state.full_context = f"ANALYSE:\n{rep_phoebe}\nVERDICT:\n{rep_avenor_raw}"
             st.session_state.analysis_complete = True
             
-            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": final_avenor_content})
+            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor_raw})
             st.rerun()
 
         except Exception as e:
