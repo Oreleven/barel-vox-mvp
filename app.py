@@ -7,18 +7,7 @@ import time
 import json
 import io
 import re
-
-# --- CONFIGURATION MOTEUR ---
-MODEL_NAME = "gemini-2.0-flash"
-
-# --- FONCTION UTILITAIRE (BASE64) ---
-def get_img_as_base64(file_path):
-    try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
-    except:
-        return None 
+from datetime import datetime
 
 # --- CONFIGURATION PAGE ---
 favicon_path = "assets/favicon.ico"
@@ -31,13 +20,46 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- SÉCURITÉ INITIALISATION (Le Fix Anti-Crash) ---
+# --- CONFIGURATION MOTEUR ---
+MODEL_NAME = "gemini-2.0-flash"
+
+# --- FONCTIONS UTILITAIRES (DÉFINIES AU DÉBUT POUR ÉVITER LE CRASH) ---
+def get_img_as_base64(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except:
+        return None 
+
+def get_asset_path(filename_part):
+    for name in [filename_part, filename_part.lower(), filename_part.capitalize()]:
+        for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".ico"]:
+            path = f"assets/{name}{ext}"
+            if os.path.exists(path): return path
+    return "👤"
+
+# --- ASSETS ---
+AVATARS = {
+    "user": "👤",
+    "evena": get_asset_path("evena"),
+    "keres": get_asset_path("keres"),
+    "liorah": get_asset_path("liorah"),
+    "ethan": get_asset_path("ethan"),
+    "krypt": get_asset_path("Krypt"),
+    "phoebe": get_asset_path("phoebe"),
+    "avenor": get_asset_path("avenor"),
+    "logo": get_asset_path("logo-barelvox"),
+    "barel": get_asset_path("barel")
+}
+
+# --- INITIALISATION SESSION (APRÈS LES FONCTIONS !) ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
         "role": "assistant",
         "name": "Avenor",
-        "avatar": get_asset_path("avenor"),
+        "avatar": AVATARS["avenor"],
         "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
     })
 
@@ -52,6 +74,7 @@ if st.session_state.verdict_color == "red": glow_color = "rgba(211, 47, 47, 0.25
 elif st.session_state.verdict_color == "orange": glow_color = "rgba(245, 124, 0, 0.25)"
 elif st.session_state.verdict_color == "green": glow_color = "rgba(56, 142, 60, 0.25)"
 
+# --- STYLES CSS ---
 st.markdown(f"""
 <style>
     /* UI Hacks */
@@ -136,27 +159,6 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# --- ASSETS ---
-def get_asset_path(filename_part):
-    for name in [filename_part, filename_part.lower(), filename_part.capitalize()]:
-        for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".ico"]:
-            path = f"assets/{name}{ext}"
-            if os.path.exists(path): return path
-    return "👤"
-
-AVATARS = {
-    "user": "👤",
-    "evena": get_asset_path("evena"),
-    "keres": get_asset_path("keres"),
-    "liorah": get_asset_path("liorah"),
-    "ethan": get_asset_path("ethan"),
-    "krypt": get_asset_path("Krypt"),
-    "phoebe": get_asset_path("phoebe"),
-    "avenor": get_asset_path("avenor"),
-    "logo": get_asset_path("logo-barelvox"),
-    "barel": get_asset_path("barel")
-}
-
 # --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
@@ -231,15 +233,13 @@ def extract_text_from_bytes(pdf_bytes):
 
 # --- NETTOYAGE JSON CHIRURGICAL ---
 def clean_gemini_json(text):
-    """Extrait le JSON même si Gemini bavarde avant/après"""
     try:
-        # On cherche le premier { et le dernier }
         start = text.find('{')
         end = text.rfind('}') + 1
         if start != -1 and end != -1:
             json_str = text[start:end]
             return json.loads(json_str)
-        return json.loads(text) # Tentative directe
+        return json.loads(text) 
     except:
         return None
 
@@ -277,7 +277,7 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
                 time.sleep(5)
                 continue
             else:
-                if output_json: # Fallback structuré
+                if output_json: 
                      return {
                         "liorah": {"analyse": "Erreur technique analyse", "flag": "🟠"},
                         "ethan": {"analyse": "Erreur technique analyse", "flag": "🟠"},
@@ -351,10 +351,7 @@ P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, expert BTP, focus a
 # --- CHAT & AVATARS ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
-# SÉCURITÉ BOUCLE DE CHAT : On s'assure que messages existe
-messages_list = st.session_state.get("messages", [])
-
-for msg in messages_list:
+for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=msg["avatar"]):
         if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
             # Détection couleur via REGEX sur le tag [FLAG : X]
@@ -429,7 +426,7 @@ if not st.session_state.analysis_complete:
             if isinstance(trinity_result, str) and "⚠️" in trinity_result:
                 st.error(trinity_result); st.stop()
 
-            # Extraction sécurisée des flags (Valeur par défaut si manquant)
+            # Extraction sécurisée des flags
             liorah_flag = trinity_result.get('liorah', {}).get('flag', '🟢')
             ethan_flag = trinity_result.get('ethan', {}).get('flag', '🟢')
             krypt_flag = trinity_result.get('krypt', {}).get('flag', '🟢')
@@ -464,7 +461,6 @@ if not st.session_state.analysis_complete:
             if "⚠️" in rep_avenor_raw: st.error(rep_avenor_raw); st.stop()
 
             # --- PARSING DU VERDICT POUR LE CAMÉLÉON ---
-            # On cherche le tag strict [FLAG : X]
             match = re.search(r"\[FLAG\s*:\s*(.*?)\]", rep_avenor_raw)
             if match:
                 flag_found = match.group(1)
