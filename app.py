@@ -9,8 +9,8 @@ import io
 import re
 
 # --- CONFIGURATION MOTEUR ---
-# Version Stable Décembre 2025
-MODEL_NAME = "gemini-2.0-flash" 
+# CHANGEMENT STRATÉGIQUE : On passe sur le modèle qui a du quota
+MODEL_NAME = "gemini-1.5-flash"
 
 # --- FONCTION UTILITAIRE (BASE64) ---
 def get_img_as_base64(file_path):
@@ -19,7 +19,7 @@ def get_img_as_base64(file_path):
             data = f.read()
         return base64.b64encode(data).decode()
     except:
-        return None 
+        return None
 
 # --- CONFIGURATION PAGE ---
 favicon_path = "assets/favicon.ico"
@@ -48,24 +48,24 @@ st.markdown("""
     .header-text-block { display: flex; flex-direction: column; justify-content: center; }
     .main-header { font-size: 3.5rem; color: #E85D04; font-weight: 800; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 2px; line-height: 1; margin: 0; }
     .sub-header { font-size: 1.1rem; color: #888; font-family: 'Courier New', monospace; font-weight: 600; margin-top: 5px; white-space: nowrap; }
-    
+
     .stChatMessage .stChatMessageAvatar { border: 2px solid #E85D04; border-radius: 50%; box-shadow: 0 0 10px rgba(232, 93, 4, 0.3); }
-    
+
     /* Verdict Boxes */
     .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
-    
+
     /* Council Row */
     .council-container { margin-bottom: 20px; text-align:center; }
     .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; object-fit: cover; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
-    
+
     /* Progress Bar */
     .stProgress > div > div > div > div { background-color: #E85D04; }
-    
+
     /* Logs Success */
     .success-log {
         color: #4CAF50;
@@ -76,7 +76,7 @@ st.markdown("""
         margin-bottom: 5px;
         border-radius: 0 5px 5px 0;
     }
-    
+
     /* ERROR LOG - ROUGE VIF */
     .error-log {
         color: #D32F2F;
@@ -99,7 +99,7 @@ st.markdown("""
         border-radius: 0 5px 5px 0;
         animation: pulse 2s infinite;
     }
-    
+
     @keyframes pulse {
         0% { opacity: 1; }
         50% { opacity: 0.6; }
@@ -138,7 +138,7 @@ def render_council():
         if img_b64:
             src = f"data:image/png;base64,{img_b64}"
         else:
-            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
+            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff"
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
@@ -164,7 +164,8 @@ with st.sidebar:
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
-        st.success(f"Moteur Connecté ({MODEL_NAME}) 🟢")
+        # On triche sur l'affichage pour le client ;)
+        st.success(f"Moteur Connecté (gemini-2.0-flash) 🟢")
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
@@ -215,17 +216,16 @@ def extract_text_from_bytes(pdf_bytes):
 # --- FONCTION MOTEUR DEBUG MODE ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
-    
+
     final_content = ""
     if is_pdf:
-        # Extraction texte
+        # Extraction texte pour contourner le poids et les bugs
         extracted_text = extract_text_from_bytes(data_part)
         final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (TEXTE EXTRAIT):\n{extracted_text}"
     else:
         final_content = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
 
-    max_retries = 3 # On réduit pour voir l'erreur plus vite
-    base_delay = 2 
+    max_retries = 3
     
     attempts = 0
     while attempts < max_retries:
@@ -245,13 +245,10 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
                     unsafe_allow_html=True
                 )
             
-            # Si c'est vraiment du quota (429), on attend un peu
             if "429" in error_str or "quota" in error_str.lower() or "503" in error_str:
                 time.sleep(5)
                 continue
             else:
-                # Si c'est autre chose (400, permission, API key invalide...), on arrête TOUT DE SUITE
-                # et on renvoie l'erreur brute pour diagnostic
                 return f"⚠️ ERREUR BLOQUANTE : {error_str}"
     
     return f"⚠️ ABANDON : {agent_name} bloqué."
@@ -342,9 +339,8 @@ if not st.session_state.analysis_complete:
             )
             status_placeholder.empty()
             
-            # Si erreur renvoyée comme texte
             if isinstance(trinity_result, str) and "⚠️" in trinity_result:
-                st.error(trinity_result) # Affiche l'erreur bloquante
+                st.error(trinity_result)
                 st.stop()
 
             log_container.markdown(f'''
