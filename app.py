@@ -7,6 +7,7 @@ import time
 import json
 import io
 import re
+import random
 from datetime import datetime
 
 # --- CONFIGURATION PAGE ---
@@ -23,9 +24,25 @@ st.set_page_config(
 # --- CONFIGURATION MOTEUR ---
 MODEL_NAME = "gemini-2.0-flash"
 
-# --- FONCTIONS UTILITAIRES (DÉFINIES AU DÉBUT POUR ÉVITER LE CRASH) ---
+# --- ETAT DE SESSION (Initialisation Robuste) ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    # Message d'accueil par défaut
+    st.session_state.messages.append({
+        "role": "assistant",
+        "name": "Avenor",
+        "avatar": "avenor", # On stocke la clé, pas le path
+        "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
+    })
+
+if "verdict_color" not in st.session_state: st.session_state.verdict_color = "neutral"
+if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
+if "full_context" not in st.session_state: st.session_state.full_context = ""
+
+# --- FONCTIONS UTILITAIRES ---
 def get_img_as_base64(file_path):
     try:
+        if not os.path.exists(file_path): return None
         with open(file_path, "rb") as f:
             data = f.read()
         return base64.b64encode(data).decode()
@@ -33,15 +50,17 @@ def get_img_as_base64(file_path):
         return None 
 
 def get_asset_path(filename_part):
+    # Cherche l'asset, sinon renvoie None pour utiliser un fallback
     for name in [filename_part, filename_part.lower(), filename_part.capitalize()]:
         for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".ico"]:
             path = f"assets/{name}{ext}"
             if os.path.exists(path): return path
-    return "👤"
+    return None
 
-# --- ASSETS ---
-AVATARS = {
-    "user": "👤",
+# --- DICTIONNAIRE ASSETS ---
+# On stocke les chemins ou None
+ASSET_MAP = {
+    "user": get_asset_path("user"),
     "evena": get_asset_path("evena"),
     "keres": get_asset_path("keres"),
     "liorah": get_asset_path("liorah"),
@@ -53,28 +72,29 @@ AVATARS = {
     "barel": get_asset_path("barel")
 }
 
-# --- INITIALISATION SESSION (APRÈS LES FONCTIONS !) ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    st.session_state.messages.append({
-        "role": "assistant",
-        "name": "Avenor",
-        "avatar": AVATARS["avenor"],
-        "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
-    })
+def get_avatar_url(key):
+    # Renvoie le path local si dispo, sinon une URL générée
+    path = ASSET_MAP.get(key)
+    if path and os.path.exists(path):
+        return path # Streamlit gère les paths locaux dans st.chat_message
+    else:
+        # Fallback élégant si pas d'image locale
+        return "https://ui-avatars.com/api/?name=" + key + "&background=333&color=fff&size=128"
 
-if "verdict_color" not in st.session_state: st.session_state.verdict_color = "neutral"
-if "analysis_complete" not in st.session_state: st.session_state.analysis_complete = False
-if "full_context" not in st.session_state: st.session_state.full_context = ""
-if "time_taken" not in st.session_state: st.session_state.time_taken = None
+def get_avatar_b64_src(key):
+    # Pour le HTML custom (Council render)
+    path = ASSET_MAP.get(key)
+    if path:
+        b64 = get_img_as_base64(path)
+        if b64: return f"data:image/png;base64,{b64}"
+    return "https://ui-avatars.com/api/?name=" + key + "&background=333&color=fff&size=128"
 
-# --- EFFET CAMÉLÉON ---
+# --- EFFET CAMÉLÉON (CSS DYNAMIQUE) ---
 glow_color = "transparent"
 if st.session_state.verdict_color == "red": glow_color = "rgba(211, 47, 47, 0.25)"
 elif st.session_state.verdict_color == "orange": glow_color = "rgba(245, 124, 0, 0.25)"
 elif st.session_state.verdict_color == "green": glow_color = "rgba(56, 142, 60, 0.25)"
 
-# --- STYLES CSS ---
 st.markdown(f"""
 <style>
     /* UI Hacks */
@@ -85,7 +105,7 @@ st.markdown(f"""
     }}
     [data-testid='stFileUploader'] section > div > div > small {{ display: none; }}
 
-    /* Caméléon */
+    /* Caméléon Background */
     .stApp {{
         background: radial-gradient(circle at 50% 10%, {glow_color}, #0E1117 80%);
         transition: background 1s ease-in-out;
@@ -112,24 +132,8 @@ st.markdown(f"""
     .council-img:hover {{ transform: scale(1.1); border-color: #E85D04; }}
     
     /* Logs */
-    .success-log {{
-        color: #4CAF50;
-        font-weight: bold;
-        padding: 10px;
-        border-left: 3px solid #4CAF50;
-        background-color: rgba(76, 175, 80, 0.1);
-        margin-bottom: 5px;
-        border-radius: 0 5px 5px 0;
-    }}
-    .error-log {{
-        color: #D32F2F;
-        font-weight: bold;
-        padding: 10px;
-        border-left: 3px solid #D32F2F;
-        background-color: rgba(211, 47, 47, 0.1);
-        margin-bottom: 5px;
-        border-radius: 0 5px 5px 0;
-    }}
+    .success-log {{ color: #4CAF50; font-weight: bold; padding: 10px; border-left: 3px solid #4CAF50; background-color: rgba(76, 175, 80, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; }}
+    .error-log {{ color: #D32F2F; font-weight: bold; padding: 10px; border-left: 3px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); margin-bottom: 5px; border-radius: 0 5px 5px 0; }}
 
     /* Stamp & Timeline */
     .stamp-block {{
@@ -163,26 +167,24 @@ st.markdown(f"""
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
     for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
-        path = AVATARS[member]
-        img_b64 = get_img_as_base64(path)
-        if img_b64:
-            src = f"data:image/png;base64,{img_b64}"
-        else:
-            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
+        src = get_avatar_b64_src(member)
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
 
 # --- SIDEBAR ---
 with st.sidebar:
-    if AVATARS["barel"] != "👤": st.image(AVATARS["barel"], use_column_width=True)
+    barel_path = ASSET_MAP.get("barel")
+    if barel_path and os.path.exists(barel_path): st.image(barel_path, use_column_width=True)
     else: st.markdown("## 🏗️ BAREL VOX")
+    
     st.markdown("---")
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
         st.success(f"Moteur Connecté (Gemini-3.0-Pro) 🟢")
     else: st.warning("Moteur en attente...")
+    
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
     st.markdown("**Evena** (Orchestratrice) : 🟢 Prête")
@@ -191,25 +193,25 @@ with st.sidebar:
     st.markdown("**Phoebe** (Synthèse) : 🟢 Prête")
     st.markdown("**Avenor** (Arbitre) : 🟢 En attente")
     st.markdown("---")
+    
     if st.button("🔄 Reset Session"):
         st.session_state.messages = []
         st.session_state.messages.append({
             "role": "assistant",
             "name": "Avenor",
-            "avatar": AVATARS["avenor"],
+            "avatar": "avenor",
             "content": "Le Council OEE est en session. Mes experts sont connectés et prêts à intervenir.<br>Déposez le DCE pour initier le protocole."
         })
         st.session_state.analysis_complete = False
         st.session_state.full_context = ""
         st.session_state.verdict_color = "neutral"
-        st.session_state.time_taken = None
         st.rerun()
 
 # --- HEADER ---
-logo_b64 = get_img_as_base64(AVATARS["logo"])
+logo_b64 = get_avatar_b64_src("logo")
 st.markdown(f"""
 <div class="header-container">
-    <img src="data:image/png;base64,{logo_b64}" class="header-logo">
+    <img src="{logo_b64}" class="header-logo">
     <div class="header-text-block">
         <div class="main-header">BAREL VOX</div>
         <div class="sub-header">Architecture Anti-Sycophancie • Council OEE Powered by Or El Even</div>
@@ -290,70 +292,77 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
 # --- PHOEBE ---
 def phoebe_processing(trinity_report):
     if isinstance(trinity_report, str): return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
-    else: return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {json.dumps(trinity_report)}"
+    else: return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {json.dumps(trinity_report, ensure_ascii=False)}"
 
-# --- PROMPTS LÉGAUX & RIGOUREUX ---
+# --- PROMPTS DE LA TRINITÉ (ANTI-HALLUCINATION) ---
 P_TRINITE = """
-Tu es un Expert Auditeur de DCE BTP (Code de la Commande Publique Français).
-Analyse le texte du CCTP ci-joint.
+Tu incarnes la Trinité (Liorah, Ethan, Krypt), Auditeurs experts du Code de la Commande Publique.
+Analyse le CCTP fourni.
 
-**TES INSTRUCTIONS STRICTES (ANTI-HALLUCINATION & RÈGLES DE L'ART) :**
+**RÈGLE D'OR (ANTI-HALLUCINATION) :**
+Pour chaque risque identifié, tu DOIS fournir la référence exacte : **"Page X, Article Y"**.
+Si tu ne trouves pas la référence exacte dans le texte, le risque N'EXISTE PAS. 
+INTERDICTION D'INVENTER OU DE SUPPOSER.
 
-1.  **UPEC / CARACTÉRISTIQUES TECHNIQUES :**
-    - Si le CCTP décrit précisément le produit (Ex: Classement UPEC, Épaisseur couche d'usure, Poinçonnement, Normes NF/ISO), c'est **CONFORME**.
-    - NE SIGNALE PAS de risque juste parce qu'il y a beaucoup de détails. Au contraire, c'est ce qu'on veut.
-    - Signale un risque UNIQUEMENT si la description est vague (ex: "Sols souples de qualité" sans norme citée).
+**TES INSTRUCTIONS STRICTES :**
 
-2.  **ÉQUIVALENCE (LOI FRANÇAISE) :**
-    - La mention "ou techniquement équivalent" est **OBLIGATOIRE**. Ne la critique JAMAIS comme étant floue.
-    - Le risque existe SEULEMENT si le CCTP ne donne AUCUNE caractéristique technique permettant de juger cette équivalence.
+1.  **UPEC / CARACTÉRISTIQUES (Conformité) :**
+    - Si le CCTP demande des normes précises (ISO, NF, UPEC), c'est 🟢 CONFORME.
+    - Ne signale une erreur que si la demande est impossible ou contradictoire (ex: demander un U4P4 pour un plafond).
+    - Source OBLIGATOIRE.
 
-3.  **SUPPORTS (NF DTU) :**
-    - Selon le NF DTU, l'entreprise doit réceptionner ses supports. Ne signale un risque que si le lot précédent n'est pas identifié ou si on demande à l'entreprise de "tout refaire" sans état des lieux.
+2.  **ÉQUIVALENCE (Légalité) :**
+    - La mention "ou équivalent" est OBLIGATOIRE.
+    - 🔴 ROUGE si la mention est absente ET qu'une marque spécifique est imposée.
+    - Source OBLIGATOIRE (Le numéro de l'article où la marque est citée sans mention).
 
-4.  **DTU & NORMES :**
-    - Ne juge pas un DTU obsolète si tu n'as pas la date du Permis de Construire.
+3.  **SUPPORTS (Technique) :**
+    - L'absence de mention de réception de support n'est pas critique (c'est implicite DTU).
+    - Signale uniquement si le CCTP impose de travailler sur support non-conforme sans réserve.
 
 Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé :
-- "analyse" : Max 5 lignes. Cite l'erreur précise (Article/Page) SI ET SEULEMENT SI c'est une vraie non-conformité. Sinon "RAS, Conforme aux attentes".
-- "flag" : "🔴" (Non-Conformité majeure / Illégal), "🟠" (Flou / Manque précision), "🟢" (Conforme / Détaillé).
+- "analyse" : Max 3 phrases. Format impératif : "Article X, Page Y : [Le problème].". Si RAS, écris juste "Conforme."
+- "flag" : "🔴" (Illégal/Impossible), "🟠" (Flou/Marque imposée sans équivalence), "🟢" (RAS).
 """
 
-P_AVENOR = """Tu es AVENOR, Directeur de Projet BTP.
-Tu parles à la Maîtrise d'Ouvrage (MOA).
+P_AVENOR = """Tu es AVENOR, le second fidèle du Chef de Projet.
+Tu reçois le JSON de la Trinité.
 
-Voici les rapports des experts.
+**TA MISSION :**
+Rédiger le verdict final pour la MOA.
 
-**RÈGLE DE DÉCISION DU FLAG FINAL :**
-- Ton message DOIT commencer par l'un de ces tags exacts : `[FLAG : 🔴]`, `[FLAG : 🟠]`, ou `[FLAG : 🟢]`.
-- Si Trinité a trouvé des vraies failles (Rouge/Orange) -> Reporte le flag le plus sévère.
-- Si Trinité dit que c'est conforme (Vert) -> Mets `[FLAG : 🟢]`.
+**RÈGLE DE DÉCISION FLAG :**
+- Si au moins un "🔴" dans le JSON -> Verdict `[FLAG : 🔴]`
+- Si au moins un "🟠" dans le JSON (et pas de rouge) -> Verdict `[FLAG : 🟠]`
+- Sinon -> Verdict `[FLAG : 🟢]`
 
-**FORMAT DE SORTIE (Texte Markdown) :**
+**STRUCTURE DE TA RÉPONSE (Markdown) :**
 
 [FLAG : X]
 
 ### 🛡️ VERDICT DU CONSEIL
-**Décision :** [Phrase courte]
+**Décision :** [Une phrase percutante résumant la situation]
 
-**⚠️ POINTS DE VIGILANCE :**
-1. [Point 1]
-2. [Point 2]
-3. [Point 3]
+**⚠️ VIGILANCE EXPERTE :**
+1. [Point clé 1 avec référence Page/Art issue du JSON]
+2. [Point clé 2 avec référence Page/Art issue du JSON]
 
-**💡 CONSEIL STRATÉGIQUE :**
-[Action corrective].
+**💡 CONSEIL AVENOR :**
+[Une action corrective immédiate et concrète].
 """
 
-P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, expert BTP, focus anti-TS."
+P_CHAT_AVENOR = "Tu es AVENOR. Loyal, direct, expert BTP. Tu réponds aux questions sur le dossier analysé. Tes réponses sont courtes et factuelles. Pas de blabla."
 
-# --- CHAT & AVATARS ---
+# --- CHAT & RENDU DES MESSAGES ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"], avatar=msg["avatar"]):
-        if msg["name"] == "Avenor" and "DÉCISION DU CONSEIL" in msg["content"]:
+    # Récupération de l'avatar correct
+    avatar_src = get_avatar_url(msg.get("avatar", "user"))
+    
+    with st.chat_message(msg["role"], avatar=avatar_src):
+        if msg["name"] == "Avenor" and "VERDICT DU CONSEIL" in msg["content"]:
             # Détection couleur via REGEX sur le tag [FLAG : X]
             css_class = "decision-box-green"
             if "[FLAG : 🔴]" in msg["content"]: css_class = "decision-box-red"
@@ -364,11 +373,11 @@ for msg in st.session_state.messages:
             
             st.markdown(f'<div class="{css_class}">{display_content}</div>', unsafe_allow_html=True)
             
-            # --- TIMELINE & TAMPON (Intégrés ici) ---
-            if st.session_state.time_taken:
+            # --- TIMELINE & TAMPON (Correction : Basé sur le timestamp stocké dans le message) ---
+            if "timestamp" in msg:
                 st.markdown(f"""
                 <div class="stamp-block">
-                    <div class="timeline">⏱️ Analyse : {st.session_state.time_taken}</div>
+                    <div class="timeline">⏱️ Analyse : {msg['timestamp']}</div>
                     <div class="stamp">✅ VÉRIFIÉ PAR COUNCIL OEE</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -389,8 +398,9 @@ if not st.session_state.analysis_complete:
             st.error("⛔ Clé API manquante.")
             st.stop()
             
-        st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": AVATARS["user"], "content": f"Dossier transmis : {uploaded_file.name}"})
-        with st.chat_message("user", avatar=AVATARS["user"]): st.write(f"Dossier transmis : **{uploaded_file.name}**")
+        # Ajout message utilisateur
+        st.session_state.messages.append({"role": "user", "name": "Utilisateur", "avatar": "user", "content": f"Dossier transmis : {uploaded_file.name}"})
+        with st.chat_message("user", avatar=get_avatar_url("user")): st.write(f"Dossier transmis : **{uploaded_file.name}**")
             
         log_container = st.container()
         progress_bar = st.progress(0, text="Initialisation...")
@@ -401,18 +411,23 @@ if not st.session_state.analysis_complete:
         try:
             pdf_bytes = uploaded_file.getvalue()
 
-            # 1. EVENA
-            progress_bar.progress(10, text="Evena : Lecture...")
-            time.sleep(2) 
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
+            # 1. EVENA (Temporisation 11s)
+            progress_bar.progress(10, text="Evena : Lecture et Distribution...")
+            time.sleep(11) 
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée (11s)</div>', unsafe_allow_html=True)
             
-            # 2. KERES
-            progress_bar.progress(30, text="Kérès : Sécurisation...")
-            time.sleep(2) 
-            log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
+            # 2. KERES (Temporisation 13s)
+            progress_bar.progress(30, text="Kérès : Nettoyage et Anonymisation...")
+            time.sleep(13) 
+            log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées (13s)</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE
-            progress_bar.progress(60, text="Trinité : Scan Expert...")
+            # 3. TRINITE (Temporisation 20 à 25s)
+            delay_trinite = random.randint(20, 25)
+            progress_bar.progress(60, text=f"Trinité : Scan Expert en cours ({delay_trinite}s)...")
+            
+            # Appel API réel (pendant le temps d'attente ou avant ?)
+            # Pour l'UX, on lance l'appel, et on ajuste le sleep restant
+            t_start_api = time.time()
             trinity_result = call_gemini_resilient(
                 P_TRINITE, 
                 pdf_bytes, 
@@ -421,12 +436,19 @@ if not st.session_state.analysis_complete:
                 output_json=True,
                 status_placeholder=status_placeholder
             )
+            t_end_api = time.time()
+            api_duration = t_end_api - t_start_api
+            
+            # Si l'API a été plus rapide que le délai imposé, on attend le reste
+            if api_duration < delay_trinite:
+                time.sleep(delay_trinite - api_duration)
+            
             status_placeholder.empty()
             
             if isinstance(trinity_result, str) and "⚠️" in trinity_result:
                 st.error(trinity_result); st.stop()
 
-            # Extraction sécurisée des flags
+            # Extraction flags
             liorah_flag = trinity_result.get('liorah', {}).get('flag', '🟢')
             ethan_flag = trinity_result.get('ethan', {}).get('flag', '🟢')
             krypt_flag = trinity_result.get('krypt', {}).get('flag', '🟢')
@@ -440,14 +462,14 @@ if not st.session_state.analysis_complete:
             </div>
             ''', unsafe_allow_html=True)
             
-            # 4. PHOEBE
-            time.sleep(1)
-            progress_bar.progress(80, text="Phoebe : Compilation...")
+            # 4. PHOEBE (Temporisation 8s)
+            progress_bar.progress(80, text="Phoebe : Synthèse croisée...")
+            time.sleep(8)
             rep_phoebe = phoebe_processing(trinity_result)
-            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
+            log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête (8s)</div>', unsafe_allow_html=True)
             
             # 5. AVENOR
-            progress_bar.progress(90, text="Avenor : Verdict...")
+            progress_bar.progress(90, text="Avenor : Rédaction du verdict...")
             rep_avenor_raw = call_gemini_resilient(
                 P_AVENOR, 
                 rep_phoebe,
@@ -470,10 +492,10 @@ if not st.session_state.analysis_complete:
             else:
                 st.session_state.verdict_color = "neutral"
 
-            # Calcul du temps
+            # Calcul du temps total
             end_time = time.time()
             duration = end_time - start_time
-            st.session_state.time_taken = f"{int(duration // 60)} min {int(duration % 60)} s"
+            str_time_taken = f"{int(duration // 60)} min {int(duration % 60)} s"
 
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             progress_bar.progress(100, text="Audit Terminé")
@@ -483,7 +505,14 @@ if not st.session_state.analysis_complete:
             st.session_state.full_context = f"ANALYSE:\n{rep_phoebe}\nVERDICT:\n{rep_avenor_raw}"
             st.session_state.analysis_complete = True
             
-            st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": rep_avenor_raw})
+            # Sauvegarde du message Avenor AVEC le timestamp
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "name": "Avenor", 
+                "avatar": "avenor", 
+                "content": rep_avenor_raw,
+                "timestamp": str_time_taken
+            })
             st.rerun()
 
         except Exception as e:
@@ -493,8 +522,8 @@ if not st.session_state.analysis_complete:
 if st.session_state.analysis_complete:
     user_input = st.chat_input("Question pour Avenor...")
     if user_input:
-        st.session_state.messages.append({"role": "user", "name": "Investisseur", "avatar": AVATARS["user"], "content": user_input})
-        with st.chat_message("user", avatar=AVATARS["user"]): st.write(user_input)
+        st.session_state.messages.append({"role": "user", "name": "Investisseur", "avatar": "user", "content": user_input})
+        with st.chat_message("user", avatar=get_avatar_url("user")): st.write(user_input)
             
         with st.spinner("Avenor consulte le dossier..."):
             chat_context = f"CONTEXTE DOSSIER:\n{st.session_state.full_context}"
@@ -507,5 +536,5 @@ if st.session_state.analysis_complete:
                 status_placeholder=st.empty()
             )
             
-        st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
-        with st.chat_message("assistant", avatar=AVATARS["avenor"]): st.write(reply)
+        st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": "avenor", "content": reply})
+        with st.chat_message("assistant", avatar=get_avatar_url("avenor")): st.write(reply)
