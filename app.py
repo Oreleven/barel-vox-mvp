@@ -8,11 +8,9 @@ import json
 import io
 import re
 
-# --- CONFIGURATION MOTEUR (STRATÉGIE "CHEVAL DE TROIE") ---
-# On utilise l'alias "gemini-pro" qui est le plus robuste et universel.
-# Il ne plantera pas (pas de 404, pas de quota 0).
-# Mais dans l'interface, on dira que c'est du 3 Pro.
-MODEL_NAME = "gemini-pro"
+# --- CONFIGURATION MOTEUR ---
+# RETOUR A LA VERSION VALIDÉE
+MODEL_NAME = "gemini-2.0-flash"
 
 # --- FONCTION UTILITAIRE (BASE64) ---
 def get_img_as_base64(file_path):
@@ -166,8 +164,7 @@ with st.sidebar:
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
-        # SHOWROOM : On affiche "Gemini 3 Pro" pour épater la galerie
-        st.success(f"Moteur Connecté (Gemini 3 Pro - Quantum) 🟢")
+        st.success(f"Moteur Connecté ({MODEL_NAME}) 🟢")
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
@@ -215,12 +212,13 @@ def extract_text_from_bytes(pdf_bytes):
     except Exception as e:
         return f"Erreur lecture PDF : {str(e)}"
 
-# --- FONCTION MOTEUR ROBUSTE ---
+# --- FONCTION MOTEUR ROBUSTE (2.0) ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
-    model = genai.GenerativeModel(MODEL_NAME)
+    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
     
     final_content = ""
     if is_pdf:
+        # On force l'extraction texte pour alléger la requête et éviter le 429
         extracted_text = extract_text_from_bytes(data_part)
         final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (TEXTE EXTRAIT):\n{extracted_text}"
     else:
@@ -232,20 +230,9 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
     while attempts < max_retries:
         try:
             response = model.generate_content(final_content)
-            text_resp = response.text
             
-            if output_json:
-                clean_json = text_resp.replace("```json", "").replace("```", "").strip()
-                try:
-                    return json.loads(clean_json)
-                except:
-                    return {
-                        "liorah": {"analyse": "Format standard appliqué (fallback)", "flag": "🟢"},
-                        "ethan": {"analyse": "Analyse textuelle OK", "flag": "🟢"},
-                        "krypt": {"analyse": "Données traitées", "flag": "🟢"}
-                    }
-            else:
-                return text_resp
+            if output_json: return json.loads(response.text)
+            else: return response.text
             
         except Exception as e:
             attempts += 1
@@ -276,7 +263,7 @@ def phoebe_processing(trinity_report):
 P_TRINITE = """
 Tu es le moteur d'analyse du CONSEIL OEE.
 Analyse ce texte issu d'un DCE BTP.
-Génère UNIQUEMENT un JSON valide (sans texte avant/après) avec 3 clés : "liorah", "ethan", "krypt".
+Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
 - "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
@@ -331,17 +318,17 @@ if not st.session_state.analysis_complete:
         try:
             pdf_bytes = uploaded_file.getvalue()
 
-            # 1. EVENA
+            # 1. EVENA (SHOWROOM)
             progress_bar.progress(10, text="Evena : Lecture...")
             time.sleep(11)
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # 2. KERES
+            # 2. KERES (SHOWROOM)
             progress_bar.progress(30, text="Kérès : Sécurisation...")
             time.sleep(14)
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE
+            # 3. TRINITE (REAL WORK)
             progress_bar.progress(60, text="Trinité : Scan Expert...")
             
             trinity_result = call_gemini_resilient(
