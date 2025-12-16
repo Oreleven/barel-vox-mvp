@@ -8,6 +8,7 @@ import json
 import re
 
 # --- CONFIGURATION MOTEUR ---
+# On reste sur le Flash 2.0 pour la vitesse, mais on blinde les appels
 MODEL_NAME = "gemini-2.0-flash" 
 
 # --- FONCTION UTILITAIRE (BASE64) ---
@@ -21,7 +22,6 @@ def get_img_as_base64(file_path):
 
 # --- CONFIGURATION DE LA PAGE ---
 favicon_path = "assets/favicon.ico"
-# C'est ici que ça plantait avant (os n'était pas importé)
 page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
 
 st.set_page_config(
@@ -186,29 +186,47 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- FONCTION MOTEUR "IMMORTELLE" (Retry Infini) ---
+# --- FONCTION MOTEUR BLINDÉE (Backoff Exponentiel) ---
 def call_gemini_resilient(role_prompt, user_content, agent_name, output_json=False, status_placeholder=None):
+    """
+    Tente d'appeler l'API Gemini avec une stratégie de retry intelligent (Exponential Backoff).
+    Gère les erreurs 429 (Resource Exhausted) sans faire planter l'app.
+    """
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
-    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT A TRAITER :\n{user_content}"
+    full_prompt = f"{role_prompt}\n\n---\n\nDOCUMENT / CONTEXTE :\n{user_content}"
+    
+    max_retries = 5
+    base_delay = 10 # secondes
     
     attempts = 0
-    while True: # Boucle infinie tant que ça ne passe pas
+    while attempts < max_retries:
         try:
-            attempts += 1
             response = model.generate_content(full_prompt)
+            # Succès !
             if output_json: return json.loads(response.text)
             else: return response.text
             
         except Exception as e:
+            attempts += 1
             error_str = str(e)
-            if "429" in error_str or "quota" in error_str.lower():
-                # On affiche un message d'attente à l'utilisateur
+            
+            # Gestion spécifique des erreurs de quota ou surcharge
+            if "429" in error_str or "quota" in error_str.lower() or "503" in error_str:
+                wait_time = base_delay * (1.5 ** attempts) # 15s, 22.5s, 33s...
+                wait_time = int(wait_time)
+                
                 if status_placeholder:
-                    status_placeholder.markdown(f'<div class="waiting-log">⏳ Trafic saturé pour {agent_name}. Pause technique de 20s (Tentative {attempts})...</div>', unsafe_allow_html=True)
-                time.sleep(20) # On attend sagement
-                continue # On recommence la boucle
+                    status_placeholder.markdown(
+                        f'<div class="waiting-log">⏳ Trafic saturé (API Google). {agent_name} temporise...<br>Tentative {attempts}/{max_retries}. Reprise dans {wait_time}s.</div>', 
+                        unsafe_allow_html=True
+                    )
+                time.sleep(wait_time)
+                continue # On retente
             else:
+                # Erreur autre (ex: clé invalide, format) -> on arrête tout de suite
                 return f"⚠️ Erreur critique Agent {agent_name} : {error_str}"
+    
+    return f"⚠️ Échec : {agent_name} n'a pas pu répondre après {max_retries} tentatives. Le réseau est trop instable."
 
 # --- FONCTIONS LOCALES ---
 def evena_extract_json(reader):
@@ -222,6 +240,7 @@ def evena_extract_json(reader):
 
 def keres_anonymize_json(json_data):
     str_data = json.dumps(json_data, ensure_ascii=False)
+    # Regex basiques pour simuler le travail
     str_data = re.sub(r'[\w\.-]+@[\w\.-]+', '[EMAIL_HIDDEN]', str_data)
     str_data = re.sub(r'\b0[1-9]([-. ]?[0-9]{2}){4}\b', '[PHONE_HIDDEN]', str_data)
     return str_data
@@ -250,7 +269,7 @@ FORMAT SORTIE :
 **Points de Vigilance :** (Top 3)
 **Conseil Stratégique :** (1 action)"""
 
-P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client. Sois pro, direct, expert BTP."
+P_CHAT_AVENOR = "Tu es AVENOR. Réponds au client sur la base de l'analyse précédente. Sois pro, direct, expert BTP."
 
 # --- CHAT & AVATARS ---
 st.markdown(render_council(), unsafe_allow_html=True)
@@ -286,24 +305,44 @@ if not st.session_state.analysis_complete:
         status_placeholder = st.empty() # Placeholder pour les messages d'attente
         
         try:
-            # 1. EVENA
-            progress_bar.progress(10, text="Evena : Lecture du fichier...")
+            # 1. EVENA (OCR)
+            progress_bar.progress(10, text="Evena : Lecture et structuration du fichier...")
             reader = PdfReader(uploaded_file)
-            json_doc = evena_extract_json(reader)
-            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # 2. KERES
-            time.sleep(1)
-            progress_bar.progress(30, text="Kérès : Nettoyage...")
+            # --- SHOWROOM DELAY ---
+            time.sleep(11) # Délai artificiel demandé pour crédibilité
+            # ----------------------
+            
+            json_doc = evena_extract_json(reader)
+            log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée ({len(json_doc)} pages)</div>', unsafe_allow_html=True)
+            
+            # 2. KERES (CLEANING)
+            progress_bar.progress(30, text="Kérès : Anonymisation et nettoyage RGPD...")
+            
+            # --- SHOWROOM DELAY ---
+            time.sleep(14) # Délai artificiel demandé pour crédibilité
+            # ----------------------
+            
             clean_json_str = keres_anonymize_json(json_doc)
-            log_container.markdown('<div class="success-log">✅ Kérès : Données anonymisées</div>', unsafe_allow_html=True)
+            log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
             # 3. TRINITE (API RESILIENTE)
-            progress_bar.progress(60, text="Trinité : Scan Expert...")
-            # Appel avec retry infini et feedback visuel
-            trinity_result = call_gemini_resilient(P_TRINITE, clean_json_str[:60000], "Trinité", output_json=True, status_placeholder=status_placeholder)
-            status_placeholder.empty() # On efface le message d'attente s'il y en avait un
+            progress_bar.progress(60, text="Trinité : Scan Expert Multispectral...")
             
+            # NOTE : On envoie tout le document (plus de limite [:60000]) grâce à Gemini 1.5/2.0
+            trinity_result = call_gemini_resilient(
+                P_TRINITE, 
+                clean_json_str, # Document COMPLET
+                "Trinité", 
+                output_json=True, 
+                status_placeholder=status_placeholder
+            )
+            status_placeholder.empty()
+            
+            # Vérification si échec critique
+            if isinstance(trinity_result, str) and "⚠️" in trinity_result:
+                 raise Exception(trinity_result)
+
             log_container.markdown(f'''
             <div class="success-log">
             ✅ <b>Trinité : Rapports Validés</b><br>
@@ -315,15 +354,23 @@ if not st.session_state.analysis_complete:
             
             # 4. PHOEBE
             time.sleep(1)
-            progress_bar.progress(80, text="Phoebe : Compilation...")
+            progress_bar.progress(80, text="Phoebe : Compilation des verdicts...")
             rep_phoebe = phoebe_processing(json.dumps(trinity_result))
             log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
             
             # 5. AVENOR (API RESILIENTE)
-            progress_bar.progress(90, text="Avenor : Délibération...")
-            rep_avenor = call_gemini_resilient(P_AVENOR, rep_phoebe, "Avenor", output_json=False, status_placeholder=status_placeholder)
+            progress_bar.progress(90, text="Avenor : Délibération finale...")
+            rep_avenor = call_gemini_resilient(
+                P_AVENOR, 
+                rep_phoebe, 
+                "Avenor", 
+                output_json=False, 
+                status_placeholder=status_placeholder
+            )
             status_placeholder.empty()
             
+            if "⚠️" in rep_avenor: raise Exception(rep_avenor)
+
             log_container.markdown('<div class="success-log">✅ Avenor : Verdict rendu</div>', unsafe_allow_html=True)
             progress_bar.progress(100, text="Audit Terminé")
             time.sleep(1)
@@ -342,15 +389,20 @@ if not st.session_state.analysis_complete:
 if st.session_state.analysis_complete:
     user_input = st.chat_input("Question pour Avenor...")
     if user_input:
-        st.session_state.messages.append({"role": "user", "name": "Stéphane", "avatar": AVATARS["user"], "content": user_input})
+        st.session_state.messages.append({"role": "user", "name": "Investisseur", "avatar": AVATARS["user"], "content": user_input})
         with st.chat_message("user", avatar=AVATARS["user"]): st.write(user_input)
             
-        with st.spinner("Avenor réfléchit..."):
-            full_prompt = f"{P_CHAT_AVENOR}\nCTX:\n{st.session_state.full_context}\nQ: {user_input}"
-            try:
-                model = genai.GenerativeModel(MODEL_NAME)
-                reply = model.generate_content(full_prompt).text
-            except: reply = "Désolé, je suis surchargé. Réessayez dans quelques secondes."
+        with st.spinner("Avenor consulte le dossier..."):
+            # On utilise aussi la fonction résiliente ici pour éviter le crash en chat
+            chat_context = f"CONTEXTE DOSSIER:\n{st.session_state.full_context}"
+            
+            reply = call_gemini_resilient(
+                P_CHAT_AVENOR,
+                f"{chat_context}\n\nQUESTION UTILISATEUR:\n{user_input}",
+                "Avenor Chat",
+                output_json=False,
+                status_placeholder=st.empty()
+            )
             
         st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": AVATARS["avenor"], "content": reply})
         with st.chat_message("assistant", avatar=AVATARS["avenor"]): st.write(reply)
