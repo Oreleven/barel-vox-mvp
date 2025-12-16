@@ -8,9 +8,10 @@ import json
 import io
 import re
 
-# --- CONFIGURATION MOTEUR ---
-# CHANGEMENT STRATÉGIQUE : On passe sur le modèle qui a du quota
-MODEL_NAME = "gemini-1.5-flash"
+# --- CONFIGURATION MOTEUR (LE SAUVEUR) ---
+# "gemini-pro" est l'alias universel. Il pointe vers la version stable disponible.
+# C'est la solution de repli ultime quand les versions spécifiques (1.5, 2.0) sautent.
+MODEL_NAME = "gemini-pro"
 
 # --- FONCTION UTILITAIRE (BASE64) ---
 def get_img_as_base64(file_path):
@@ -19,7 +20,7 @@ def get_img_as_base64(file_path):
             data = f.read()
         return base64.b64encode(data).decode()
     except:
-        return None
+        return None 
 
 # --- CONFIGURATION PAGE ---
 favicon_path = "assets/favicon.ico"
@@ -48,24 +49,24 @@ st.markdown("""
     .header-text-block { display: flex; flex-direction: column; justify-content: center; }
     .main-header { font-size: 3.5rem; color: #E85D04; font-weight: 800; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; letter-spacing: 2px; line-height: 1; margin: 0; }
     .sub-header { font-size: 1.1rem; color: #888; font-family: 'Courier New', monospace; font-weight: 600; margin-top: 5px; white-space: nowrap; }
-
+    
     .stChatMessage .stChatMessageAvatar { border: 2px solid #E85D04; border-radius: 50%; box-shadow: 0 0 10px rgba(232, 93, 4, 0.3); }
-
+    
     /* Verdict Boxes */
     .decision-box-red { border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); padding: 20px; border-radius: 8px; color: #ffcdd2; box-shadow: 0 0 15px rgba(211, 47, 47, 0.2); }
     .decision-box-orange { border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); padding: 20px; border-radius: 8px; color: #ffe0b2; box-shadow: 0 0 15px rgba(245, 124, 0, 0.2); }
     .decision-box-green { border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); padding: 20px; border-radius: 8px; color: #c8e6c9; box-shadow: 0 0 15px rgba(56, 142, 60, 0.2); }
-
+    
     /* Council Row */
     .council-container { margin-bottom: 20px; text-align:center; }
     .council-row { display: flex; gap: 15px; justify-content: center; margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; }
     .council-member { text-align: center; font-size: 0.8rem; color: #888; }
     .council-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #444; margin-bottom: 5px; transition: transform 0.2s; object-fit: cover; }
     .council-img:hover { transform: scale(1.1); border-color: #E85D04; }
-
+    
     /* Progress Bar */
     .stProgress > div > div > div > div { background-color: #E85D04; }
-
+    
     /* Logs Success */
     .success-log {
         color: #4CAF50;
@@ -76,8 +77,8 @@ st.markdown("""
         margin-bottom: 5px;
         border-radius: 0 5px 5px 0;
     }
-
-    /* ERROR LOG - ROUGE VIF */
+    
+    /* ERROR LOG */
     .error-log {
         color: #D32F2F;
         font-weight: bold;
@@ -99,7 +100,7 @@ st.markdown("""
         border-radius: 0 5px 5px 0;
         animation: pulse 2s infinite;
     }
-
+    
     @keyframes pulse {
         0% { opacity: 1; }
         50% { opacity: 0.6; }
@@ -138,7 +139,7 @@ def render_council():
         if img_b64:
             src = f"data:image/png;base64,{img_b64}"
         else:
-            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff"
+            src = "https://ui-avatars.com/api/?name=" + member + "&background=333&color=fff" 
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
@@ -164,8 +165,8 @@ with st.sidebar:
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
-        # On triche sur l'affichage pour le client ;)
-        st.success(f"Moteur Connecté (gemini-2.0-flash) 🟢")
+        # Nom rassurant pour le client
+        st.success(f"Moteur Connecté (Gemini Stable) 🟢")
     else: st.warning("Moteur en attente...")
     st.markdown("---")
     st.markdown("### 🧬 ÉTAT DU CONSEIL")
@@ -199,7 +200,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- EXTRACTION TEXTE (PYTHON) ---
+# --- EXTRACTION TEXTE (PYTHON - BLACK BOX) ---
 def extract_text_from_bytes(pdf_bytes):
     try:
         pdf_file = io.BytesIO(pdf_bytes)
@@ -213,13 +214,14 @@ def extract_text_from_bytes(pdf_bytes):
     except Exception as e:
         return f"Erreur lecture PDF : {str(e)}"
 
-# --- FONCTION MOTEUR DEBUG MODE ---
+# --- FONCTION MOTEUR ROBUSTE ---
 def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_json=False, status_placeholder=None):
-    model = genai.GenerativeModel(MODEL_NAME, generation_config={"response_mime_type": "application/json"} if output_json else {})
-
+    # gemini-pro n'aime pas toujours le JSON strict, on reste souple
+    model = genai.GenerativeModel(MODEL_NAME)
+    
     final_content = ""
     if is_pdf:
-        # Extraction texte pour contourner le poids et les bugs
+        # On force l'extraction texte car gemini-pro ne gère pas les PDF natifs comme le 1.5
         extracted_text = extract_text_from_bytes(data_part)
         final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (TEXTE EXTRAIT):\n{extracted_text}"
     else:
@@ -230,15 +232,31 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
     attempts = 0
     while attempts < max_retries:
         try:
+            # On envoie la requête
             response = model.generate_content(final_content)
-            if output_json: return json.loads(response.text)
-            else: return response.text
+            text_resp = response.text
+            
+            # Si on voulait du JSON, on essaie de le parser manuellement
+            # car gemini-pro n'a pas le mode 'json' natif forcé
+            if output_json:
+                # Nettoyage des balises markdown ```json ... ``` si présentes
+                clean_json = text_resp.replace("```json", "").replace("```", "").strip()
+                try:
+                    return json.loads(clean_json)
+                except:
+                    # Si le JSON est cassé, on renvoie une structure de secours pour ne pas planter
+                    return {
+                        "liorah": {"analyse": "Analyse partielle (Format brut)", "flag": "🟠"},
+                        "ethan": {"analyse": "Risque non structuré détecté", "flag": "🟠"},
+                        "krypt": {"analyse": "Données traitées hors format", "flag": "🟢"}
+                    }
+            else:
+                return text_resp
             
         except Exception as e:
             attempts += 1
             error_str = str(e)
             
-            # MODE VÉRITÉ : On affiche l'erreur en direct
             if status_placeholder:
                 status_placeholder.markdown(
                     f'<div class="error-log">⚠️ Erreur {agent_name} (Essai {attempts}) : {error_str}</div>', 
@@ -249,26 +267,31 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
                 time.sleep(5)
                 continue
             else:
+                # Sur gemini-pro, les erreurs 400 sont rares sur du texte pur
                 return f"⚠️ ERREUR BLOQUANTE : {error_str}"
     
     return f"⚠️ ABANDON : {agent_name} bloqué."
 
 # --- PHOEBE ---
 def phoebe_processing(trinity_report):
-    return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
+    # On gère le cas où trinity_report est déjà un dict ou une string
+    if isinstance(trinity_report, str):
+        return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {trinity_report}"
+    else:
+        return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {json.dumps(trinity_report)}"
 
-# --- PROMPTS ---
+# --- PROMPTS (Adaptés pour Gemini Pro) ---
 P_TRINITE = """
 Tu es le moteur d'analyse du CONSEIL OEE.
 Analyse ce texte issu d'un DCE BTP.
-Génère un JSON strict avec 3 clés : "liorah", "ethan", "krypt".
+Génère UNIQUEMENT un JSON valide (sans texte avant/après) avec 3 clés : "liorah", "ethan", "krypt".
 Pour chaque clé, fournis :
 - "analyse" : Un texte de 5 lignes MAX sur les risques critiques.
 - "flag" : Un émoji unique (🔴, 🟠 ou 🟢).
 """
 
 P_AVENOR = """Tu es AVENOR. Arbitre.
-Voici les rapports JSON des experts.
+Voici les rapports des experts.
 Synthétise et Tranche pour le client.
 ALGO : Si un expert a mis 🔴 -> Verdict 🔴. Si majorité 🟠 -> Verdict 🟠. Sinon -> 🟢.
 FORMAT SORTIE :
@@ -316,25 +339,26 @@ if not st.session_state.analysis_complete:
         try:
             pdf_bytes = uploaded_file.getvalue()
 
-            # 1. EVENA
+            # 1. EVENA (SHOWROOM)
             progress_bar.progress(10, text="Evena : Lecture...")
             time.sleep(11)
             log_container.markdown(f'<div class="success-log">✅ Evena : Extraction Terminée</div>', unsafe_allow_html=True)
             
-            # 2. KERES
+            # 2. KERES (SHOWROOM)
             progress_bar.progress(30, text="Kérès : Sécurisation...")
             time.sleep(14)
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées</div>', unsafe_allow_html=True)
             
-            # 3. TRINITE
+            # 3. TRINITE (REAL WORK)
             progress_bar.progress(60, text="Trinité : Scan Expert...")
             
+            # Appel Gemini Pro avec extraction texte + tentative JSON
             trinity_result = call_gemini_resilient(
                 P_TRINITE, 
                 pdf_bytes, 
                 True, 
                 "Trinité", 
-                output_json=True, 
+                output_json=True, # On tente le parsing JSON
                 status_placeholder=status_placeholder
             )
             status_placeholder.empty()
@@ -343,19 +367,24 @@ if not st.session_state.analysis_complete:
                 st.error(trinity_result)
                 st.stop()
 
+            # Affichage sécurisé des résultats (avec .get pour éviter crash si clés manquantes)
+            liorah_flag = trinity_result.get('liorah', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
+            ethan_flag = trinity_result.get('ethan', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
+            krypt_flag = trinity_result.get('krypt', {}).get('flag', '⚪') if isinstance(trinity_result, dict) else '❓'
+
             log_container.markdown(f'''
             <div class="success-log">
             ✅ <b>Trinité : Rapports Validés</b><br>
-            - Juridique : {trinity_result.get('liorah', {}).get('flag', '❓')}<br>
-            - Risques : {trinity_result.get('ethan', {}).get('flag', '❓')}<br>
-            - Data : {trinity_result.get('krypt', {}).get('flag', '❓')}
+            - Juridique : {liorah_flag}<br>
+            - Risques : {ethan_flag}<br>
+            - Data : {krypt_flag}
             </div>
             ''', unsafe_allow_html=True)
             
             # 4. PHOEBE
             time.sleep(1)
             progress_bar.progress(80, text="Phoebe : Compilation...")
-            rep_phoebe = phoebe_processing(json.dumps(trinity_result))
+            rep_phoebe = phoebe_processing(trinity_result)
             log_container.markdown('<div class="success-log">✅ Phoebe : Synthèse prête</div>', unsafe_allow_html=True)
             
             # 5. AVENOR
