@@ -405,7 +405,7 @@ if not st.session_state.analysis_complete:
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées (13s)</div>', unsafe_allow_html=True)
 
             # 3. TRINITE
-            delay = random.randint(20, 25)
+            delay = random.randint(30, 35)
             progress_bar.progress(60, text=f"Trinité : Analyse ({delay}s)...")
             
             t1 = time.time()
