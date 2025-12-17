@@ -10,9 +10,13 @@ import re
 import random
 
 # --- CONFIGURATION PAGE ---
+# On tente de charger l'icone locale, sinon emoji
+favicon_path = "assets/favicon.ico"
+page_icon = favicon_path if os.path.exists(favicon_path) else "🏗️"
+
 st.set_page_config(
     page_title="BAREL VOX - Council OEE",
-    page_icon="🏗️",
+    page_icon=page_icon,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -51,6 +55,7 @@ def get_asset_path(filename_part):
             if os.path.exists(path): return path
     return None
 
+# Mapping des assets
 ASSET_MAP = {
     "user": get_asset_path("user"),
     "evena": get_asset_path("evena"),
@@ -105,16 +110,12 @@ st.markdown(f"""
     
     .stChatMessage .stChatMessageAvatar {{ border: 2px solid #E85D04; border-radius: 50%; box-shadow: 0 0 10px rgba(232, 93, 4, 0.3); }}
     
-    /* Verdict Boxes - Mise en forme stricte des listes */
-    .decision-box-red, .decision-box-orange, .decision-box-green {{
-        padding: 20px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.2); margin-top: 10px;
-    }}
-    .decision-box-red {{ border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.1); color: #ffcdd2; }}
-    .decision-box-orange {{ border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.1); color: #ffe0b2; }}
-    .decision-box-green {{ border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.1); color: #c8e6c9; }}
+    /* Verdict Boxes - Couleurs et Lisibilité */
+    .decision-box-red {{ border: 2px solid #D32F2F; background-color: rgba(211, 47, 47, 0.15); padding: 20px; border-radius: 8px; color: #ffcdd2; margin-top: 10px; }}
+    .decision-box-orange {{ border: 2px solid #F57C00; background-color: rgba(245, 124, 0, 0.15); padding: 20px; border-radius: 8px; color: #ffe0b2; margin-top: 10px; }}
+    .decision-box-green {{ border: 2px solid #388E3C; background-color: rgba(56, 142, 60, 0.15); padding: 20px; border-radius: 8px; color: #c8e6c9; margin-top: 10px; }}
     
-    .decision-box-red strong, .decision-box-orange strong, .decision-box-green strong {{ color: #fff; font-weight: 900; }}
-    .decision-box-red h3, .decision-box-orange h3, .decision-box-green h3 {{ margin-top: 0; text-transform: uppercase; font-size: 1.2rem; }}
+    .decision-box-red h3, .decision-box-orange h3, .decision-box-green h3 {{ margin-top: 0; font-family: 'Helvetica Neue', sans-serif; text-transform: uppercase; }}
     
     /* Council Row */
     .council-container {{ margin-bottom: 20px; text-align:center; }}
@@ -138,7 +139,7 @@ st.markdown(f"""
     }}
     .stamp {{
         padding: 5px 12px;
-        border: 3px solid #E85D04; /* Couleur Barel */
+        border: 3px solid #E85D04; 
         border-radius: 8px;
         color: #E85D04;
         font-family: 'Impact', sans-serif;
@@ -147,7 +148,7 @@ st.markdown(f"""
         transform: rotate(-3deg);
         letter-spacing: 2px;
         font-size: 1rem;
-        opacity: 0.8;
+        opacity: 0.9;
     }}
     .timeline {{
         color: #888;
@@ -179,7 +180,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- EXTRACTION TEXTE AMÉLIORÉE (ANTI-HACK LINE BREAK) ---
+# --- EXTRACTION TEXTE ET NETTOYAGE CHIRURGICAL ---
 def extract_text_from_bytes(pdf_bytes):
     try:
         pdf_file = io.BytesIO(pdf_bytes)
@@ -188,11 +189,11 @@ def extract_text_from_bytes(pdf_bytes):
         for page in reader.pages:
             txt_page = page.extract_text()
             if txt_page:
-                # ASTUCE: Remplacer les retours à la ligne simples par des espaces pour reconstituer les phrases
-                # Mais garder les doubles retours pour les paragraphes.
-                # C'est crucial pour que "ou \n techniquement équivalent" soit lu comme une seule phrase.
-                txt_page = txt_page.replace(" \n", " ").replace("\n", " ") 
-                text += txt_page + "\n\n"
+                # 1. On remplace les retours à la ligne simples par des espaces
+                # Cela recolle "ou techniquement \n équivalent" en "ou techniquement équivalent"
+                clean_page = re.sub(r'(?<!\n)\n(?!\n)', ' ', txt_page)
+                # 2. On garde les paragraphes (doubles sauts de ligne)
+                text += clean_page + "\n\n"
         return text
     except Exception as e:
         return f"Erreur lecture PDF : {str(e)}"
@@ -214,7 +215,7 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
     final_content = ""
     if is_pdf:
         extracted_text = extract_text_from_bytes(data_part)
-        final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (TEXTE RECONSTITUÉ):\n{extracted_text}"
+        final_content = f"{role_prompt}\n\n---\n\nCONTENU DU DCE (NETTOYÉ):\n{extracted_text}"
     else:
         final_content = f"{role_prompt}\n\n---\n\nCONTEXTE :\n{data_part}"
 
@@ -245,56 +246,71 @@ def call_gemini_resilient(role_prompt, data_part, is_pdf, agent_name, output_jso
 def phoebe_processing(trinity_report):
     return f"RAPPORT SYNTHÈSE\nDonnées Techniques : {json.dumps(trinity_report, ensure_ascii=False)}"
 
-# --- PROMPTS ---
+# --- PROMPTS DE LA TRINITÉ (Version Anti-Hallucination Renforcée) ---
 P_TRINITE = """
-Tu incarnes la Trinité (Liorah, Ethan, Krypt), Auditeurs BTP.
-Analyse le texte du CCTP fourni. Le texte a été extrait d'un PDF, les retours à la ligne ont été supprimés pour former des blocs continus.
+Tu incarnes la Trinité (Liorah, Ethan, Krypt), Auditeurs BTP experts.
+Analyse le texte du CCTP fourni ci-dessous.
 
-**INSTRUCTION CRITIQUE SUR L'ÉQUIVALENCE (ANTI-HALLUCINATION) :**
-Tu dois scanner le texte à la recherche de la mention : "ou techniquement équivalent", "ou équivalent", ou "similaire".
-1. Si une marque (ex: Forbo, Laterlite) est citée ET que la mention "ou équivalent" (ou formule proche) est présente dans le même paragraphe ou le paragraphe d'introduction du lot : **C'EST CONFORME (🟢)**.
-2. NE SIGNALE PAS DE RISQUE si la mention existe.
+**MISSION CRITIQUE : DÉTECTION D'ÉQUIVALENCE**
+Ton objectif principal est de vérifier la légalité des marques imposées.
 
-**TES INSTRUCTIONS :**
-1. **Marques & Équivalence :**
-   - Marque citée SEULE sans "ou équivalent" -> 🟠 (Alerte).
-   - Marque citée AVEC "ou équivalent" -> 🟢 (Conforme).
+**PROTOCOLE DE VÉRIFICATION (A SUIVRE À LA LETTRE) :**
+1. Cherche dans tout le texte les termes : "ou équivalent", "ou techniquement équivalent", "similaire", "type".
+2. Si tu trouves une marque (ex: Forbo, Laterlite, etc.) :
+   - Regarde IMMÉDIATEMENT avant ou après (même paragraphe ou titre).
+   - Si la mention "ou équivalent" (ou variante) est présente : **C'EST VERT (🟢). RAS.**
+   - Si la mention "ou équivalent" est ABSENTE : **C'EST ORANGE (🟠).**
 
-2. **Normes :**
-   - Référence à DTU/Normes -> 🟢.
+**EXEMPLE :**
+- Texte : "Sol type Marmoleum ou techniquement équivalent." -> RESULTAT : 🟢 (Car la mention est là).
+- Texte : "Peinture de marque Seigneurie." (Pas de mention) -> RESULTAT : 🟠.
 
-Génère un JSON : {"liorah": {"analyse": "...", "flag": "..."}, ...}
-Pour "analyse" : Sois très bref. Cite la preuve. Ex: "Marque Forbo citée avec mention 'ou équivalent' -> Conforme."
+**RAPPEL IMPORTANT :** Ne sois pas zélé. Si le texte dit "ou techniquement équivalent", tu DOIS valider. Ne dis pas que c'est manquant.
+
+**SORTIE JSON ATTENDUE :**
+Génère un JSON avec 3 clés : "liorah", "ethan", "krypt".
+Pour chaque clé :
+- "analyse" : Phrase courte. Ex: "Marque Forbo citée avec mention 'ou équivalent' -> Conforme."
+- "flag" : "🔴" (Illégal/Impossible), "🟠" (Marque imposée sans équivalence), "🟢" (Conforme/RAS).
 """
 
-P_AVENOR = """Tu es AVENOR. Tu rédiges le verdict FINAL.
+P_AVENOR = """Tu es AVENOR, le chef de projet.
+Tu rédiges le verdict FINAL pour le client.
 
 **INPUT :** Rapport JSON de la Trinité.
 
-**LOGIQUE DE COULEUR IMPÉRATIVE :**
-- Si Trinité dit 🟠 ou 🔴 -> Ton verdict est [FLAG : 🟠] ou [FLAG : 🔴].
-- Si Trinité dit 🟢 partout -> Ton verdict est [FLAG : 🟢].
+**LOGIQUE DE DÉCISION :**
+- Si Trinité = 🟢 partout -> Verdict [FLAG : 🟢].
+- Si Trinité = 🟠 -> Verdict [FLAG : 🟠].
+- Si Trinité = 🔴 -> Verdict [FLAG : 🔴].
 
-**FORMAT DE SORTIE (MARKDOWN STRICT) :**
-Utilise des listes à puces Markdown pour que ce soit lisible.
+**FORMAT DE SORTIE (MARKDOWN) :**
+Sois clair, aéré, utilise des listes à puces. Pas de pavés de texte.
 
 [FLAG : X]
 
 ### 🛡️ VERDICT DU CONSEIL
-**Décision :** [Phrase courte]
+**Décision :** [Phrase courte et percutante]
 
 **⚠️ VIGILANCE EXPERTE :**
-* [Point 1]
+* [Point 1 : Cite précisément l'article ou la page]
 * [Point 2]
 
-**💡 CONSEIL AVENOR :**
-* [Conseil actionnable]
+**💡 CONSEIL STRATÉGIQUE :**
+* [Conseil actionnable pour la MOA]
 """
+
+P_CHAT_AVENOR = "Tu es AVENOR. Réponds court, pro, expert BTP."
 
 # --- SIDEBAR ---
 with st.sidebar:
-    if AVATARS["barel"] != "👤": st.image(AVATARS["barel"], use_column_width=True)
-    else: st.markdown("## 🏗️ BAREL VOX")
+    # CORRECTION CRASH: Utilisation de ASSET_MAP au lieu de AVATARS
+    barel_img = ASSET_MAP.get("barel")
+    if barel_img and os.path.exists(barel_img): 
+        st.image(barel_img, use_column_width=True)
+    else: 
+        st.markdown("## 🏗️ BAREL VOX")
+    
     st.markdown("---")
     api_key = st.text_input("🔑 Clé API Google Gemini", type="password")
     if api_key:
@@ -311,7 +327,7 @@ with st.sidebar:
         st.session_state.verdict_color = "neutral"
         st.rerun()
 
-# --- CHAT LOOP ---
+# --- CHAT LOOP & AFFICHAGE ---
 st.markdown(render_council(), unsafe_allow_html=True)
 
 for msg in st.session_state.messages:
@@ -327,7 +343,7 @@ for msg in st.session_state.messages:
             
             st.markdown(f'<div class="{css_class}">{clean_content}</div>', unsafe_allow_html=True)
             
-            # TIMELINE & TAMPON (Si timestamp existe)
+            # TIMELINE & TAMPON (Affichés seulement si le timestamp existe)
             if "timestamp" in msg:
                 st.markdown(f"""
                 <div class="stamp-block">
@@ -342,12 +358,14 @@ for msg in st.session_state.messages:
             else:
                 st.write(msg["content"])
 
-# --- PROCESS ---
+# --- MAIN PROCESS ---
 if not st.session_state.analysis_complete:
     uploaded_file = st.file_uploader("Upload DCE", type=['pdf'], label_visibility="collapsed")
     if uploaded_file and api_key:
-        st.session_state.messages.append({"role": "user", "name": "User", "avatar": "user", "content": f"Dossier : {uploaded_file.name}"})
-        st.rerun()
+        # Ajout du message user si pas déjà fait
+        if not st.session_state.messages or st.session_state.messages[-1]["role"] != "user":
+             st.session_state.messages.append({"role": "user", "name": "User", "avatar": "user", "content": f"Dossier : {uploaded_file.name}"})
+             st.rerun()
 
     # Si le dernier message est user et analyse pas faite -> Lancer
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user" and not st.session_state.analysis_complete:
@@ -358,21 +376,21 @@ if not st.session_state.analysis_complete:
         start_time = time.time()
         
         try:
-            # Récupérer bytes
             uploaded_file.seek(0)
             pdf_bytes = uploaded_file.getvalue()
 
-            # 1. EVENA
+            # 1. EVENA (11s)
             progress_bar.progress(10, text="Evena : Lecture...")
             time.sleep(11)
+            # Affichage du temps SEULEMENT une fois fini
             log_container.markdown(f'<div class="success-log">✅ Evena : Lecture Terminée (11s)</div>', unsafe_allow_html=True)
 
-            # 2. KERES
+            # 2. KERES (13s)
             progress_bar.progress(30, text="Kérès : Sécurisation...")
             time.sleep(13)
             log_container.markdown('<div class="success-log">✅ Kérès : Données sécurisées (13s)</div>', unsafe_allow_html=True)
 
-            # 3. TRINITE
+            # 3. TRINITE (20-25s)
             delay = random.randint(20, 25)
             progress_bar.progress(60, text=f"Trinité : Analyse ({delay}s)...")
             
@@ -392,7 +410,7 @@ if not st.session_state.analysis_complete:
             
             log_container.markdown(f'''<div class="success-log">✅ Trinité : Rapports Validés ({int(delay)}s)<br>- Juridique : {l_flag} | Risques : {e_flag} | Data : {k_flag}</div>''', unsafe_allow_html=True)
 
-            # 4. PHOEBE
+            # 4. PHOEBE (8s)
             progress_bar.progress(80, text="Phoebe : Synthèse...")
             time.sleep(8)
             phoebe_res = phoebe_processing(trinity_res)
@@ -435,4 +453,18 @@ if st.session_state.analysis_complete:
     q = st.chat_input("Question pour Avenor...")
     if q:
         st.session_state.messages.append({"role": "user", "name": "User", "avatar": "user", "content": q})
+        with st.chat_message("user", avatar=get_avatar_url("user")): st.write(q)
+            
+        with st.spinner("Avenor consulte le dossier..."):
+            chat_context = f"CONTEXTE DOSSIER:\n{st.session_state.full_context}"
+            reply = call_gemini_resilient(
+                P_CHAT_AVENOR,
+                f"{chat_context}\n\nQUESTION UTILISATEUR:\n{q}",
+                False, 
+                "Avenor Chat",
+                output_json=False,
+                status_placeholder=st.empty()
+            )
+            
+        st.session_state.messages.append({"role": "assistant", "name": "Avenor", "avatar": "avenor", "content": reply})
         st.rerun()
