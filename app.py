@@ -162,14 +162,14 @@ st.markdown(f"""
 # --- RENDER COUNCIL ---
 def render_council():
     html = '<div class="council-container"><div class="council-row">'
-    for member in ["evena", "keres", "liorah", "ethan", "krypt", "phoebe"]:
+    for member in ["evena", "keres", "liorah", "ethan", "Krypt", "phoebe"]:
         src = get_avatar_b64_safe(member)
         html += f'<div class="council-member"><img src="{src}" class="council-img"><br>{member.capitalize()}</div>'
     html += '</div></div>'
     return html
 
 # --- HEADER ---
-logo_b64 = get_avatar_b64_safe("logo")
+logo_b64 = get_avatar_b64_safe("logo-barelvox")
 st.markdown(f"""
 <div class="header-container">
     <img src="{logo_b64}" class="header-logo">
