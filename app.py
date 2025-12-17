@@ -41,7 +41,7 @@ if "full_context" not in st.session_state: st.session_state.full_context = ""
 EMOJI_MAP = {
     "user": "👤", "evena": "👩‍💻", "keres": "🛡️", "liorah": "⚖️",
     "ethan": "⚠️", "krypt": "💾", "phoebe": "🧠", "avenor": "👷‍♂️",
-    "barel": "🏗️", "logo": "🏗️"
+    "barel": "🏗️", "logo-barelvox": "🏗️"
 }
 
 def get_avatar_safe(key):
